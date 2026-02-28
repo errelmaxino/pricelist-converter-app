@@ -1,522 +1,750 @@
 from __future__ import annotations
 
-import datetime as _dt
-import hashlib
 import io
 import re
-from dataclasses import dataclass, field
+from collections import Counter, defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+import pandas as pd
 import pdfplumber
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-CANONICAL_COLUMNS = [
+# -----------------------------
+# Static rules / normalizations
+# -----------------------------
+
+BRAND_ALIASES: Dict[str, str] = {
+    "TOY": "TOYOTA",
+    "TOY.": "TOYOTA",
+    "TOYO": "TOYOTA",
+    "TOYOYA": "TOYOTA",
+    "TOYOTA": "TOYOTA",
+    "MIT": "MITSUBISHI",
+    "MIT.": "MITSUBISHI",
+    "MITS": "MITSUBISHI",
+    "MITS.": "MITSUBISHI",
+    "MITSUBISHI": "MITSUBISHI",
+    "MITSUBUSHI": "MITSUBISHI",
+    "NIS": "NISSAN",
+    "NIS.": "NISSAN",
+    "NISSAN": "NISSAN",
+    "ISU": "ISUZU",
+    "ISU.": "ISUZU",
+    "ISUZU": "ISUZU",
+    "HYU": "HYUNDAI",
+    "HYU.": "HYUNDAI",
+    "HYUNDAI": "HYUNDAI",
+    "MAZ": "MAZDA",
+    "MAZ.": "MAZDA",
+    "MAZDA": "MAZDA",
+    "SUZ": "SUZUKI",
+    "SUZ.": "SUZUKI",
+    "SUZUKI": "SUZUKI",
+    "KIA": "KIA",
+    "HONDA": "HONDA",
+    "FORD": "FORD",
+    "CHEV": "CHEVROLET",
+    "CHEV.": "CHEVROLET",
+    "CHEVROLET": "CHEVROLET",
+    "DAIHATSU": "DAIHATSU",
+    "MERCEDES": "MERCEDES BENZ",
+    "BENZ": "MERCEDES BENZ",
+    "MERCEDES BENZ": "MERCEDES BENZ",
+    "SUBARU": "SUBARU",
+    "PROTON": "PROTON",
+    "FOTON": "FOTON",
+    "DAEWOO": "DAEWOO",
+    "MAHINDRA": "MAHINDRA",
+    "ASIATOPIC": "ASIATOPIC",
+    "NUVO-PRO": "NUVO-PRO",
+}
+
+ENGINE_CODES = {
+    "18R",
+    "2E",
+    "3K",
+    "4K",
+    "12R",
+    "2C",
+    "2L",
+    "3L",
+    "4D31",
+    "4D32",
+    "4DR5",
+    "4HF1",
+    "4BC2",
+    "4M40",
+    "4G63",
+    "C240",
+    "C-240",
+    "4BA1",
+    "4BB1",
+    "4BC1",
+    "4BD1",
+    "4BE1",
+    "4JA1",
+    "4JB1",
+    "4JG2",
+    "4D56",
+    "1KD",
+    "2KD",
+    "K6A",
+}
+
+BRAND_REGEX = re.compile(
+    r"^(?P<brand>"
+    + "|".join(re.escape(k) for k in sorted(BRAND_ALIASES, key=len, reverse=True))
+    + r")\b[\s.-]*(?P<rest>.*)$",
+    re.IGNORECASE,
+)
+ENGINE_REGEX = re.compile(
+    r"\b(?:" + "|".join(re.escape(code) for code in sorted(ENGINE_CODES, key=len, reverse=True)) + r")\b",
+    re.IGNORECASE,
+)
+CODE_REGEX = re.compile(r"^(?P<code>(?:VAX|VA|VKX|VK)-[A-Z0-9*]+)\s*(?P<rest>.*)$", re.IGNORECASE)
+PRICE_REGEX = re.compile(r"(?P<price>\d{1,3}(?:,\d{3})*(?:\.\d{2})?)\s*$")
+AXLE_REGEX = re.compile(
+    r"^(?P<axle>FRT\.?\s*&\s*RR|FRT\.?&\s*RR|FRT\s*&\s*RR|FRT-RR|FRT/?RR|FRONT|REAR|RR|FR|FRT\.?)\b[\s:.-]*(?P<rest>.*)$",
+    re.IGNORECASE,
+)
+
+NOISE_TERMS = [
+    "TIHLUCK",
+    "PASAY",
+    "EMAIL",
+    "UPDATE SEPT",
+    "OF 18",
+    "(02)",
+    "GUARANTEED",
+    "TRADING",
+    "CORPORATION",
+    "GMAIL.COM",
+]
+
+MAIN_COLUMNS = [
+    "Source Line",
+    "Supplier Brand",
     "Category",
+    "Code",
+    "Axle",
     "Brand",
-    "Part No.",
-    "OE No.",
     "Model",
+    "Engine",
     "Year",
-    "Size",
     "Original Price (PHP)",
     "Your Price (PHP)",
     "Use Price (PHP)",
     "Page",
-    "Source Line",
+    "Confidence",
+    "Review Status",
+    "Pattern Notes",
 ]
 
-KEEP_AS_EXTRA = "__KEEP_AS_EXTRA__"
-IGNORE_COLUMN = "__IGNORE__"
+RAW_COLUMNS = ["Page", "Supplier Brand", "Category", "Code", "Axle", "Description", "Original Price (PHP)"]
 
-HEADER_ALIASES = {
-    "Category": ["category", "product category", "group", "section"],
-    "Brand": ["brand", "make", "manufacturer", "supplier brand"],
-    "Part No.": [
-        "part no",
-        "part number",
-        "part #",
-        "item code",
-        "item no",
-        "sku",
-        "code",
-        "product code",
-    ],
-    "OE No.": ["oe no", "oe number", "oem no", "oem number", "oe #", "oem #", "reference no"],
-    "Model": ["model", "application", "vehicle", "fitment", "description", "item description"],
-    "Year": ["year", "yr", "year model", "model year", "years"],
-    "Size": ["size", "dia", "diameter", "spec", "specification", "dimension"],
-    "Original Price (PHP)": [
-        "price",
-        "amount",
-        "list price",
-        "srp",
-        "unit price",
-        "original price",
-        "selling price",
-        "php",
-        "price php",
-    ],
-}
-
-PRICE_RE = re.compile(r"(?:PHP|₱)?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?")
-HEADER_WORD_RE = re.compile(r"^[A-Za-z][A-Za-z0-9#()./\-\s]*$")
-
-
-def _clean_text(value: object) -> str:
-    if value is None:
-        return ""
-    text = str(value).replace("\n", " ").replace("\xa0", " ")
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
-def _slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
-
-
-def canonicalize_header(header: str) -> Optional[str]:
-    normalized = _slug(header)
-    if not normalized:
-        return None
-    for canonical, aliases in HEADER_ALIASES.items():
-        if normalized == _slug(canonical):
-            return canonical
-        for alias in aliases:
-            if normalized == _slug(alias):
-                return canonical
-    return None
+PROTECTED_MODEL_YEAR_PATTERNS = [
+    re.compile(r"\bBONGO\s+2000\b", re.IGNORECASE),
+]
 
 
 @dataclass
-class ParsedDocument:
-    detected_headers: List[str]
-    rows: List[Dict[str, object]]
-    header_fingerprint: str
-    warnings: List[str] = field(default_factory=list)
+class CatalogRow:
+    page: int
+    supplier_brand: str
+    category: str
+    code: str
+    axle: str
+    description: str
+    price: Optional[float]
+    source_line: str
 
 
-# ----- year / model cleanup rules -----
+@dataclass
+class ParsedCatalog:
+    raw_rows: List[CatalogRow]
+    application_rows: List[Dict[str, object]]
+    review_rows: List[Dict[str, object]]
+    warnings: List[str]
 
-def expand_short_year(two_digit: str) -> int:
+
+# -----------------------------
+# Text helpers
+# -----------------------------
+
+
+def _clean_text(text: str) -> str:
+    value = str(text or "")
+    value = (
+        value.replace("–", "-")
+        .replace("—", "-")
+        .replace("’", "'")
+        .replace("“", '"')
+        .replace("”", '"')
+        .replace("½", "1/2")
+    )
+    value = re.sub(r"(?<=\d)\s*,\s*(?=\d{3}\b)", ",", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value
+
+
+def _cleanup_model(text: str) -> str:
+    value = _clean_text(text)
+    value = value.replace(".ORIG", " ORIG")
+    value = value.replace("HI ACE", "HIACE")
+    value = value.replace("STA FE", "SANTA FE")
+    value = value.replace("I1O", "I10")
+    value = re.sub(r"\b'\b", " ", value)
+    value = value.replace("' ", " ").replace(" '", " ")
+    value = value.replace('" ', ' ').replace(' "', ' ')
+    value = value.replace('"', " ")
+    value = value.replace("'", " ")
+    value = re.sub(r"\s+", " ", value).strip(" ,-/")
+    return value
+
+
+def _model_key(model: str) -> str:
+    return re.sub(r"[^A-Z0-9]+", " ", _cleanup_model(model).upper()).strip()
+
+
+def _expand_short_year(two_digit: str) -> int:
     year = int(two_digit)
-    pivot = (_dt.date.today().year % 100) + 1
-    return 2000 + year if year <= pivot else 1900 + year
+    return 2000 + year if year <= 35 else 1900 + year
 
 
-def normalize_year_expression(raw: str) -> str:
-    value = re.sub(r"\s+", " ", raw.strip().replace("’", "'")).replace("-up", "-Up")
+def _normalize_year(value: str) -> str:
+    text = _clean_text(value).replace('"', "'").upper().replace("MY", "")
+    text = text.replace(" TO ", "-").replace("- UP", "-UP").replace(" - UP", "-UP")
 
-    full = re.fullmatch(r"((?:19|20)\d{2})\s*-\s*((?:19|20)\d{2}|[Uu]p)", value)
-    if full:
-        end = "Up" if full.group(2).lower() == "up" else full.group(2)
-        return f"{full.group(1)} - {end}"
+    match = re.fullmatch(r"'?(\d{2})\s*-\s*'?(\d{2})", text)
+    if match:
+        return f"{_expand_short_year(match.group(1))}-{_expand_short_year(match.group(2))}"
 
-    short = re.fullmatch(r"'(\d{2})\s*-\s*'?(?:(\d{2})|([Uu]p))?", value)
-    if short:
-        start = expand_short_year(short.group(1))
-        if short.group(2):
-            return f"{start} - {expand_short_year(short.group(2))}"
-        return f"{start} - Up"
+    match = re.fullmatch(r"'?(\d{2})\s*-\s*UP", text)
+    if match:
+        return f"{_expand_short_year(match.group(1))}-Up"
 
-    short_up = re.fullmatch(r"'(\d{2})\s*([Uu]p)", value)
-    if short_up:
-        return f"{expand_short_year(short_up.group(1))} - Up"
+    match = re.fullmatch(r"(\d{4})\s*-\s*(\d{4})", text)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}"
 
-    single = re.fullmatch(r"((?:19|20)\d{2})", value)
-    if single:
-        return single.group(1)
+    match = re.fullmatch(r"(\d{4})\s*-\s*UP", text)
+    if match:
+        return f"{match.group(1)}-Up"
+
+    match = re.fullmatch(r"'?(\d{2})", text)
+    if match:
+        return str(_expand_short_year(match.group(1)))
+
+    match = re.fullmatch(r"(\d{4})", text)
+    if match:
+        return match.group(1)
 
     return value
 
 
-def split_model_and_year(model_year_text: str) -> Tuple[str, str]:
-    text = re.sub(r"\s+", " ", model_year_text.strip().replace("’", "'"))
-    if not text:
-        return "", ""
-
-    patterns = [
-        re.compile(
-            r"^(?P<model>.*?)(?P<year>(?:19|20)\d{2}\s*-\s*(?:19|20)\d{2}|(?:19|20)\d{2}\s*-\s*[Uu]p|(?:19|20)\d{2})$"
-        ),
-        re.compile(r"^(?P<model>.*?)(?P<year>'\d{2}\s*-\s*'?(?:\d{2})|'\d{2}\s*-\s*[Uu]p|'\d{2}\s*-\s*|'\d{2}\s*[Uu]p)$"),
-    ]
-    for pattern in patterns:
-        match = pattern.match(text)
-        if match:
-            model = match.group("model").strip(" -")
-            year = normalize_year_expression(match.group("year"))
-            return model, year
-    return text, ""
+YEAR_PATTERNS = [
+    re.compile(r"(?P<all>(?P<s>\d{4})\s*(?:-|TO)\s*(?P<e>\d{4}|UP))", re.IGNORECASE),
+    # Short-year ranges like 93'-98', '93-'98, 93'-UP, '06-'20.
+    re.compile(r"(?P<all>[\"']?(?P<s>\d{2})[\"']?\s*-\s*[\"']?(?P<e>\d{2}|UP)[\"']?)", re.IGNORECASE),
+    re.compile(r"(?P<all>(?P<y>\d{4}))", re.IGNORECASE),
+    re.compile(r"(?P<all>[\"']?(?P<y2>\d{2})[\"']?MY)", re.IGNORECASE),
+    re.compile(r"(?P<all>[\"']?(?P<y3>\d{2})[\"'])", re.IGNORECASE),
+    re.compile(r"(?P<all>(?<![A-Z0-9])(?P<y4>\d{2})(?![A-Z0-9]))$", re.IGNORECASE),
+]
 
 
-def fix_cross_column_year(model: str, year: str, size_text: str) -> Tuple[str, str, str]:
-    model = re.sub(r"\s+", " ", model).strip()
-    year = re.sub(r"\s+", " ", year).strip()
-    size_text = re.sub(r"\s+", " ", size_text).strip().replace("’", "'")
+def _extract_year(text: str) -> Tuple[str, str]:
+    protected_spans: List[Tuple[int, int]] = []
+    for pattern in PROTECTED_MODEL_YEAR_PATTERNS:
+        for protected in pattern.finditer(text):
+            protected_spans.append(protected.span())
 
-    if not year:
-        match = re.match(r"^(?P<model>.*?)(?P<start>(?:19|20)\d{2})\s*-\s*$", model)
-        size_match = re.match(r"^(?P<end>(?:19|20)\d{2})\s+(?P<size>.+)$", size_text)
-        if match and size_match:
-            return match.group("model").strip(" -"), f"{match.group('start')} - {size_match.group('end')}", size_match.group("size").strip()
+    best_match: Optional[Tuple[Tuple[int, int], re.Match[str]]] = None
+    for pattern in YEAR_PATTERNS:
+        for match in pattern.finditer(text):
+            span = match.span("all")
+            if any(span[0] >= p0 and span[1] <= p1 for p0, p1 in protected_spans):
+                continue
+            score = (span[1] - span[0], span[0])
+            if best_match is None or score > best_match[0]:
+                best_match = (score, match)
 
-    if not year:
-        shorthand = re.search(
-            r"^(?P<model>.*?)(?:\s+)('(?:\d{2})\s*-\s*'?(?:\d{2})|'\d{2}\s*-\s*[Uu]p|'\d{2}\s*-\s*|'\d{2}\s*[Uu]p)$",
-            model,
-        )
-        if shorthand:
-            model = shorthand.group("model").strip()
-            year = normalize_year_expression(shorthand.group(2))
+    if best_match is None:
+        return "", text
 
-    if not year:
-        size_year = re.match(r"^(?P<start>(?:19|20)\d{2})\s*-\s*(?P<end>(?:19|20)\d{2}|[Uu]p)\s+(?P<size>.+)$", size_text)
-        if size_year:
-            end = "Up" if size_year.group("end").lower() == "up" else size_year.group("end")
-            return model, f"{size_year.group('start')} - {end}", size_year.group("size").strip()
+    match = best_match[1]
+    groups = match.groupdict()
 
-    return model, year, size_text
+    if groups.get("s") and groups.get("e"):
+        start = groups["s"] if len(groups["s"]) == 4 else str(_expand_short_year(groups["s"]))
+        end_group = groups["e"].upper()
+        end = "Up" if end_group == "UP" else (end_group if len(end_group) == 4 else str(_expand_short_year(end_group)))
+        year = f"{start}-{end}"
+    elif groups.get("y"):
+        year = groups["y"]
+    elif groups.get("y2"):
+        year = str(_expand_short_year(groups["y2"]))
+    elif groups.get("y3"):
+        year = str(_expand_short_year(groups["y3"]))
+    elif groups.get("y4"):
+        year = str(_expand_short_year(groups["y4"]))
+    else:
+        bare_two_digit = re.sub(r"[^0-9]", "", match.group("all"))
+        year = str(_expand_short_year(bare_two_digit)) if len(bare_two_digit) == 2 else match.group("all")
+
+    remaining = _cleanup_model((text[: match.start("all")] + " " + text[match.end("all") :]).strip())
+    return year, remaining
 
 
-# ----- pdf extraction -----
+# -----------------------------
+# PDF reading / row extraction
+# -----------------------------
 
-def _group_lines(words: List[dict], tolerance: float = 2.0) -> List[dict]:
-    lines: List[dict] = []
+
+def _group_page_lines(page) -> List[Dict[str, object]]:
+    words = page.extract_words(use_text_flow=True, keep_blank_chars=False)
+    grouped: List[Dict[str, object]] = []
     for word in sorted(words, key=lambda x: (x["top"], x["x0"])):
         placed = False
-        for line in lines:
-            if abs(line["top"] - word["top"]) <= tolerance:
+        for line in grouped:
+            if abs(float(line["top"]) - float(word["top"])) <= 2.2:
                 line["words"].append(word)
                 placed = True
                 break
         if not placed:
-            lines.append({"top": word["top"], "words": [word]})
+            grouped.append({"top": word["top"], "words": [word]})
 
-    output = []
-    for line in sorted(lines, key=lambda x: x["top"]):
+    output: List[Dict[str, object]] = []
+    for line in sorted(grouped, key=lambda x: x["top"]):
         row_words = sorted(line["words"], key=lambda x: x["x0"])
         output.append(
             {
                 "top": line["top"],
-                "words": row_words,
-                "text": " ".join(w["text"] for w in row_words).strip(),
-                "min_x": min(w["x0"] for w in row_words),
+                "min_x": min(word["x0"] for word in row_words),
+                "text": _clean_text(" ".join(word["text"] for word in row_words)),
             }
         )
     return output
 
 
-def _is_heading_line(text: str) -> bool:
-    text = text.strip()
-    upper = text.upper()
-    if not text or re.search(r"\d", text):
-        return False
-    if PRICE_RE.search(text):
-        return False
-    if any(token in upper for token in ["PART NUMBER", "OE NUMBER", "MODEL", "YEAR", "SIZE", "PRICE"]):
-        return False
-    letters_only = re.sub(r"[^A-Za-z&/\-\s]", "", text)
-    return bool(letters_only) and letters_only.upper() == letters_only
 
-
-def _clean_table(table: List[List[object]]) -> List[List[str]]:
-    cleaned: List[List[str]] = []
-    max_len = max((len(r) for r in table), default=0)
-    for row in table:
-        values = [_clean_text(cell) for cell in row]
-        if len(values) < max_len:
-            values.extend([""] * (max_len - len(values)))
-        if any(values):
-            cleaned.append(values)
-    return cleaned
-
-
-def _score_header_row(row: List[str]) -> int:
-    non_empty = [c for c in row if c]
-    if len(non_empty) < 2:
-        return -1
-    canonical_hits = sum(1 for cell in non_empty if canonicalize_header(cell))
-    alpha_hits = sum(1 for cell in non_empty if HEADER_WORD_RE.match(cell) and not re.search(r"\d", cell))
-    if canonical_hits >= 2:
-        return 10 + canonical_hits
-    if canonical_hits >= 1 and alpha_hits >= 2:
-        return 7 + canonical_hits
-    if alpha_hits >= max(3, len(non_empty) - 1):
-        return 4
-    return 0
-
-
-def _looks_like_data_row(row: List[str]) -> bool:
-    text = " | ".join(row)
-    return bool(re.search(r"\d", text) or PRICE_RE.search(text))
-
-
-def _dedupe_headers(headers: List[str]) -> List[str]:
-    seen: Dict[str, int] = {}
-    output: List[str] = []
-    for idx, header in enumerate(headers, start=1):
-        clean = _clean_text(header) or f"Column {idx}"
-        count = seen.get(clean, 0) + 1
-        seen[clean] = count
-        output.append(clean if count == 1 else f"{clean} ({count})")
-    return output
-
-
-def _detect_headings_for_table(page, table_top: float, current_category: str, current_brand: str) -> Tuple[str, str]:
-    words = page.extract_words(use_text_flow=True, keep_blank_chars=False)
-    lines = _group_lines(words)
-    for line in lines:
-        if line["top"] >= table_top:
-            break
-        text = line["text"]
-        if _is_heading_line(text) and line["min_x"] < 140:
-            if len(text.split()) > 1:
-                current_category = text.title()
-            else:
-                current_brand = text.title()
-    return current_category, current_brand
-
-
-def extract_document(pdf_path: str | Path) -> ParsedDocument:
-    rows: List[Dict[str, object]] = []
-    all_headers: List[str] = []
+def extract_catalog_rows(pdf_path: str | Path) -> Tuple[List[CatalogRow], List[str]]:
+    rows: List[CatalogRow] = []
     warnings: List[str] = []
-    last_headers: Optional[List[str]] = None
-    current_category = ""
-    current_brand = ""
+    category = ""
+    supplier_brand = "NUVO-PRO"
 
     with pdfplumber.open(str(pdf_path)) as pdf:
         for page_number, page in enumerate(pdf.pages, start=1):
-            tables = page.find_tables()
-            if not tables:
-                continue
+            pending_pre_lines: List[str] = []
+            current: Optional[Dict[str, object]] = None
 
-            for table in tables:
-                current_category, current_brand = _detect_headings_for_table(page, table.bbox[1], current_category, current_brand)
-                raw_rows = _clean_table(table.extract())
-                if not raw_rows:
+            for line in _group_page_lines(page):
+                text = line["text"]
+                upper = text.upper()
+                if not text:
                     continue
 
-                header_score = _score_header_row(raw_rows[0])
-                if header_score >= 7:
-                    headers = _dedupe_headers(raw_rows[0])
-                    data_rows = raw_rows[1:]
-                    last_headers = headers
-                elif last_headers and len(last_headers) == len(raw_rows[0]) and _looks_like_data_row(raw_rows[0]):
-                    headers = last_headers
-                    data_rows = raw_rows
-                else:
-                    headers = _dedupe_headers([f"Column {i}" for i in range(1, len(raw_rows[0]) + 1)])
-                    data_rows = raw_rows
-                    warnings.append(f"Page {page_number}: used generic column names for one detected table.")
+                if "BRAKE SHOE" in upper:
+                    category = "Brake Shoe"
+                    pending_pre_lines = []
+                    current = None
+                    continue
+                if "BRAKE PAD" in upper:
+                    category = "Brake Pad"
+                    pending_pre_lines = []
+                    current = None
+                    continue
+                if "NUVO-PRO" in upper:
+                    supplier_brand = "NUVO-PRO"
+                    continue
+                if any(term in upper for term in NOISE_TERMS):
+                    continue
 
-                for h in headers:
-                    if h not in all_headers:
-                        all_headers.append(h)
+                code_match = CODE_REGEX.match(upper)
+                if code_match:
+                    if current:
+                        rows.append(
+                            CatalogRow(
+                                page=int(current["page"]),
+                                supplier_brand=str(current["supplier_brand"]),
+                                category=str(current["category"]),
+                                code=str(current["code"]),
+                                axle=str(current["axle"]),
+                                description=_clean_text(str(current["description"])),
+                                price=current.get("price"),
+                                source_line=_clean_text(f"{current['code']} {current['axle']} {current['description']}") if current.get("axle") else _clean_text(f"{current['code']} {current['description']}") ,
+                            )
+                        )
+                        current = None
 
-                for raw in data_rows:
-                    if len(raw) < len(headers):
-                        raw = raw + [""] * (len(headers) - len(raw))
-                    elif len(raw) > len(headers):
-                        raw = raw[: len(headers)]
+                    code = code_match.group("code").upper()
+                    rest = _clean_text(code_match.group("rest"))
+                    axle = ""
+                    axle_match = AXLE_REGEX.match(rest.upper())
+                    if axle_match:
+                        axle = _normalize_axle(axle_match.group("axle"))
+                        rest = _clean_text(axle_match.group("rest"))
 
-                    row = {headers[i]: raw[i] for i in range(len(headers))}
-                    row["Category"] = current_category
-                    row["Brand"] = current_brand
-                    row["Page"] = page_number
-                    row["Source Line"] = " | ".join(v for v in raw if v)
-                    rows.append(row)
+                    description = " ".join(pending_pre_lines + ([rest] if rest else []))
+                    pending_pre_lines = []
+                    current = {
+                        "page": page_number,
+                        "supplier_brand": supplier_brand,
+                        "category": category or "Uncategorized",
+                        "code": code,
+                        "axle": axle,
+                        "description": description,
+                        "price": None,
+                    }
+
+                    price_match = PRICE_REGEX.search(description)
+                    if price_match:
+                        current["price"] = float(price_match.group("price").replace(",", ""))
+                        current["description"] = _clean_text(description[: price_match.start()])
+                        rows.append(
+                            CatalogRow(
+                                page=page_number,
+                                supplier_brand=supplier_brand,
+                                category=str(current["category"]),
+                                code=code,
+                                axle=axle,
+                                description=_clean_text(str(current["description"])),
+                                price=current.get("price"),
+                                source_line=_clean_text(f"{code} {axle} {current['description']}") if axle else _clean_text(f"{code} {current['description']}"),
+                            )
+                        )
+                        current = None
+                    continue
+
+                if current is not None:
+                    current["description"] = _clean_text(f"{current['description']} {text}")
+                    price_match = PRICE_REGEX.search(str(current["description"]))
+                    if price_match:
+                        current["price"] = float(price_match.group("price").replace(",", ""))
+                        current["description"] = _clean_text(str(current["description"])[: price_match.start()])
+                        rows.append(
+                            CatalogRow(
+                                page=int(current["page"]),
+                                supplier_brand=str(current["supplier_brand"]),
+                                category=str(current["category"]),
+                                code=str(current["code"]),
+                                axle=str(current["axle"]),
+                                description=_clean_text(str(current["description"])),
+                                price=current.get("price"),
+                                source_line=_clean_text(f"{current['code']} {current['axle']} {current['description']}") if current.get("axle") else _clean_text(f"{current['code']} {current['description']}") ,
+                            )
+                        )
+                        current = None
+                    continue
+
+                if float(line["min_x"]) > 110:
+                    pending_pre_lines.append(text)
+
+            if current is not None:
+                rows.append(
+                    CatalogRow(
+                        page=int(current["page"]),
+                        supplier_brand=str(current["supplier_brand"]),
+                        category=str(current["category"]),
+                        code=str(current["code"]),
+                        axle=str(current["axle"]),
+                        description=_clean_text(str(current["description"])),
+                        price=current.get("price"),
+                        source_line=_clean_text(f"{current['code']} {current['axle']} {current['description']}") if current.get("axle") else _clean_text(f"{current['code']} {current['description']}"),
+                    )
+                )
 
     if not rows:
-        warnings.append("No tables were detected. This app works best with text-based tabular PDFs.")
-
-    base_headers = list(all_headers)
-    if any(r.get("Category") for r in rows) and "Category" not in base_headers:
-        base_headers.insert(0, "Category")
-    if any(r.get("Brand") for r in rows) and "Brand" not in base_headers:
-        insert_at = 1 if "Category" in base_headers else 0
-        base_headers.insert(insert_at, "Brand")
-
-    fingerprint_source = "|".join(_slug(h) for h in base_headers)
-    fingerprint = hashlib.md5(fingerprint_source.encode("utf-8")).hexdigest()[:12] if fingerprint_source else "noheaders"
-    return ParsedDocument(detected_headers=base_headers, rows=rows, header_fingerprint=fingerprint, warnings=warnings)
+        warnings.append("No catalog rows were detected. This parser works best with text-based automotive catalog PDFs.")
+    return rows, warnings
 
 
-# ----- mapping / output -----
+# -----------------------------
+# Row expansion / smart parsing
+# -----------------------------
 
-def build_suggested_mapping(headers: Iterable[str]) -> Dict[str, str]:
-    mapping: Dict[str, str] = {}
-    used_targets = set()
-    for header in headers:
-        target = canonicalize_header(header)
-        if target and target not in used_targets:
-            mapping[header] = target
-            used_targets.add(target)
-        elif header in {"Category", "Brand"} and header not in used_targets:
-            mapping[header] = header
-            used_targets.add(header)
+
+def _normalize_axle(value: str) -> str:
+    text = _clean_text(value).upper().replace(" ", "")
+    if text in {"FRONT", "FR", "FRT"}:
+        return "Front"
+    if text in {"REAR", "RR"}:
+        return "Rear"
+    if "RR" in text and ("FRT" in text or "FRONT" in text or text.startswith("FR")):
+        return "Front / Rear"
+    return _clean_text(value).title()
+
+
+
+def _split_segments(description: str) -> List[str]:
+    text = description.replace(" / ", "/").replace("/ ", "/").replace(" /", "/")
+    raw_segments = [segment.strip(" -") for segment in text.split("/") if segment.strip(" -")]
+    merged: List[str] = []
+    for segment in raw_segments:
+        if merged and re.match(
+            r"^(?:\d+(?:V|MM|\"|X\d+)?|'?\d{2}(?:\s*-\s*'?\d{2}|-UP)?|\(?\d.*\)?|ORIG TYPE\b|W/|DOUBLE TIRE\b)",
+            segment,
+            re.IGNORECASE,
+        ):
+            merged[-1] = f"{merged[-1]} / {segment}"
         else:
-            mapping[header] = KEEP_AS_EXTRA
+            merged.append(segment)
+    return merged
+
+
+
+def _parse_segment(segment: str, carry_brand: str = "") -> Dict[str, object]:
+    raw = _cleanup_model(segment)
+    brand = carry_brand
+    confidence = 0.55
+    notes: List[str] = []
+
+    brand_match = BRAND_REGEX.match(raw)
+    if brand_match:
+        brand = BRAND_ALIASES[brand_match.group("brand").upper()]
+        raw = _cleanup_model(brand_match.group("rest"))
+        confidence += 0.20
+        notes.append("brand token")
+    elif carry_brand:
+        confidence += 0.20
+        notes.append("brand carried forward")
+
+    year, raw = _extract_year(raw)
+    if year:
+        year = _normalize_year(year)
+        confidence += 0.15
+        notes.append("year parsed")
+
+    engine_tokens = [match.group(0).upper().replace("C-240", "C240") for match in ENGINE_REGEX.finditer(raw)]
+    unique_engine_tokens: List[str] = []
+    for token in engine_tokens:
+        if token not in unique_engine_tokens:
+            unique_engine_tokens.append(token)
+    engine = ", ".join(unique_engine_tokens)
+    if unique_engine_tokens:
+        confidence += 0.08
+        notes.append("engine code parsed")
+        for token in unique_engine_tokens:
+            raw = re.sub(rf"\b{re.escape(token.replace('C240', 'C-240'))}\b", " ", raw, flags=re.IGNORECASE)
+            raw = re.sub(rf"\b{re.escape(token)}\b", " ", raw, flags=re.IGNORECASE)
+        raw = _cleanup_model(raw)
+
+    return {
+        "brand": brand,
+        "model": raw,
+        "engine": engine,
+        "year": year,
+        "confidence": round(min(confidence, 0.99), 2),
+        "pattern_notes": ", ".join(notes),
+    }
+
+
+
+def _build_model_brand_map(application_rows: Iterable[Dict[str, object]]) -> Dict[str, str]:
+    counter: Counter[Tuple[str, str]] = Counter()
+    for row in application_rows:
+        brand = _clean_text(row.get("Brand", "")).upper()
+        model = _clean_text(row.get("Model", "")).upper()
+        if not brand or not model:
+            continue
+        first_word = _model_key(model).split(" ")[0] if _model_key(model) else ""
+        if first_word:
+            counter[(first_word, brand)] += 1
+
+    mapping: Dict[str, str] = {}
+    grouped: Dict[str, List[Tuple[str, int]]] = defaultdict(list)
+    for (first_word, brand), count in counter.items():
+        grouped[first_word].append((brand, count))
+
+    for first_word, values in grouped.items():
+        values.sort(key=lambda x: (-x[1], x[0]))
+        mapping[first_word] = values[0][0]
     return mapping
 
 
-def apply_mapping(
-    doc: ParsedDocument,
-    mapping: Dict[str, str],
-    mode: str = "normalized",
-    preserve_unknown: bool = True,
-) -> Tuple[List[str], List[Dict[str, object]]]:
-    if mode == "exact":
-        exact_headers = list(doc.detected_headers)
-        output_headers = exact_headers + [h for h in ["Page", "Source Line"] if h not in exact_headers]
-        out_rows: List[Dict[str, object]] = []
-        for raw in doc.rows:
-            row = {h: raw.get(h, "") for h in output_headers}
-            out_rows.append(row)
-        return output_headers, out_rows
 
-    extras_in_order: List[str] = []
-    canonical_headers = list(CANONICAL_COLUMNS)
-    out_rows: List[Dict[str, object]] = []
+def expand_catalog_rows(raw_rows: List[CatalogRow]) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
+    expanded: List[Dict[str, object]] = []
 
-    for raw in doc.rows:
-        normalized = {col: "" for col in canonical_headers}
-        extras: Dict[str, object] = {}
+    for row in raw_rows:
+        carry_brand = ""
+        segments = _split_segments(row.description)
+        for segment_index, segment in enumerate(segments, start=1):
+            parsed = _parse_segment(segment, carry_brand=carry_brand)
+            if parsed["brand"]:
+                carry_brand = str(parsed["brand"])
 
-        for source_header in doc.detected_headers:
-            if source_header in {"Page", "Source Line"}:
-                continue
-            value = raw.get(source_header, "")
-            target = mapping.get(source_header, KEEP_AS_EXTRA)
-            if target in CANONICAL_COLUMNS:
-                if not normalized[target]:
-                    normalized[target] = value
-                elif value and str(value) not in str(normalized[target]):
-                    normalized[target] = f"{normalized[target]} | {value}"
-            elif target == KEEP_AS_EXTRA and preserve_unknown:
-                extras[source_header] = value
-                if source_header not in extras_in_order:
-                    extras_in_order.append(source_header)
+            expanded.append(
+                {
+                    "Source Line": row.source_line,
+                    "Supplier Brand": row.supplier_brand,
+                    "Category": row.category,
+                    "Code": row.code,
+                    "Axle": _normalize_axle(row.axle),
+                    "Brand": parsed["brand"],
+                    "Model": parsed["model"],
+                    "Engine": parsed["engine"],
+                    "Year": parsed["year"],
+                    "Original Price (PHP)": row.price,
+                    "Your Price (PHP)": None,
+                    "Use Price (PHP)": None,
+                    "Page": row.page,
+                    "Confidence": parsed["confidence"],
+                    "Review Status": "",
+                    "Pattern Notes": parsed["pattern_notes"],
+                    "_Segment": segment,
+                    "_Segment Order": segment_index,
+                }
+            )
 
-        # carry metadata if missing from mapping
-        normalized["Category"] = normalized["Category"] or raw.get("Category", "")
-        normalized["Brand"] = normalized["Brand"] or raw.get("Brand", "")
-        normalized["Page"] = raw.get("Page", "")
-        normalized["Source Line"] = raw.get("Source Line", "")
+    model_brand_map = _build_model_brand_map(expanded)
 
-        model, year = split_model_and_year(_clean_text(normalized["Model"]))
-        merged_model = model or _clean_text(normalized["Model"])
-        merged_year = year or _clean_text(normalized["Year"])
-        fixed_model, fixed_year, fixed_size = fix_cross_column_year(merged_model, merged_year, _clean_text(normalized["Size"]))
-        normalized["Model"] = fixed_model
-        normalized["Year"] = fixed_year
-        normalized["Size"] = fixed_size
+    review_rows: List[Dict[str, object]] = []
+    for row in expanded:
+        if not row["Brand"]:
+            model_key = _model_key(str(row["Model"]))
+            first_word = model_key.split(" ")[0] if model_key else ""
+            inferred_brand = model_brand_map.get(first_word, "")
+            if inferred_brand:
+                row["Brand"] = inferred_brand
+                row["Confidence"] = round(min(float(row["Confidence"]) + 0.12, 0.95), 2)
+                row["Pattern Notes"] = (
+                    f"{row['Pattern Notes']}, brand inferred from model map ({inferred_brand})"
+                    if row["Pattern Notes"]
+                    else f"brand inferred from model map ({inferred_brand})"
+                )
 
-        price_value = _coerce_price(normalized["Original Price (PHP)"])
-        normalized["Original Price (PHP)"] = price_value if price_value is not None else _clean_text(normalized["Original Price (PHP)"])
-        normalized["Your Price (PHP)"] = None
-        normalized["Use Price (PHP)"] = None
+        # Obvious missing details / confidence labels
+        confidence = float(row["Confidence"])
+        if not row["Brand"] or not row["Model"]:
+            status = "Needs Review"
+            confidence = min(confidence, 0.60)
+        elif confidence >= 0.90:
+            status = "Auto-Accepted"
+        elif confidence >= 0.75:
+            status = "Review Suggested"
+        else:
+            status = "Needs Review"
 
-        for extra_header, extra_value in extras.items():
-            normalized[extra_header] = extra_value
-        out_rows.append(normalized)
+        row["Confidence"] = round(confidence, 2)
+        row["Review Status"] = status
 
-    output_headers = canonical_headers.copy()
-    if preserve_unknown:
-        insert_at = output_headers.index("Page")
-        for extra in extras_in_order:
-            if extra not in output_headers:
-                output_headers.insert(insert_at, extra)
-                insert_at += 1
-    return output_headers, out_rows
+        if status != "Auto-Accepted":
+            review_rows.append({key: row[key] for key in MAIN_COLUMNS})
 
-
-def _coerce_price(value: object) -> Optional[float]:
-    text = _clean_text(value)
-    if not text:
-        return None
-    match = PRICE_RE.search(text)
-    if not match:
-        return None
-    amount = re.sub(r"[^\d.]", "", match.group(0))
-    try:
-        return float(amount)
-    except ValueError:
-        return None
+    expanded.sort(key=lambda x: (int(x["Page"]), str(x["Code"]), int(x["_Segment Order"])))
+    return expanded, review_rows
 
 
-def dataframe_preview(headers: List[str], rows: List[Dict[str, object]], limit: int = 25):
-    import pandas as pd
 
-    preview_rows = []
-    for row in rows[:limit]:
-        preview_rows.append({h: row.get(h, "") for h in headers})
-    return pd.DataFrame(preview_rows, columns=headers)
+def parse_catalog_pdf(pdf_path: str | Path) -> ParsedCatalog:
+    raw_rows, warnings = extract_catalog_rows(pdf_path)
+    application_rows, review_rows = expand_catalog_rows(raw_rows)
+    return ParsedCatalog(raw_rows=raw_rows, application_rows=application_rows, review_rows=review_rows, warnings=warnings)
 
 
-# ----- excel -----
+# -----------------------------
+# DataFrame helpers
+# -----------------------------
 
-def build_workbook(headers: List[str], rows: List[Dict[str, object]]) -> Workbook:
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Pricelist"
 
+def applications_dataframe(rows: List[Dict[str, object]]) -> pd.DataFrame:
+    return pd.DataFrame([{column: row.get(column, "") for column in MAIN_COLUMNS} for row in rows], columns=MAIN_COLUMNS)
+
+
+
+def raw_rows_dataframe(rows: List[CatalogRow]) -> pd.DataFrame:
+    data = []
+    for row in rows:
+        data.append(
+            {
+                "Page": row.page,
+                "Supplier Brand": row.supplier_brand,
+                "Category": row.category,
+                "Code": row.code,
+                "Axle": row.axle,
+                "Description": row.description,
+                "Original Price (PHP)": row.price,
+            }
+        )
+    return pd.DataFrame(data, columns=RAW_COLUMNS)
+
+
+# -----------------------------
+# Excel export
+# -----------------------------
+
+
+def _write_df_to_sheet(wb: Workbook, title: str, df: pd.DataFrame) -> None:
+    ws = wb.create_sheet(title=title)
     header_fill = PatternFill(fill_type="solid", fgColor="1F4E78")
     header_font = Font(color="FFFFFF", bold=True)
 
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws.cell(row=1, column=col_idx, value=header)
+    for col_idx, column in enumerate(df.columns, start=1):
+        cell = ws.cell(row=1, column=col_idx, value=column)
         cell.fill = header_fill
         cell.font = header_font
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    your_price_col = headers.index("Your Price (PHP)") + 1 if "Your Price (PHP)" in headers else None
-    use_price_col = headers.index("Use Price (PHP)") + 1 if "Use Price (PHP)" in headers else None
-    original_price_col = headers.index("Original Price (PHP)") + 1 if "Original Price (PHP)" in headers else None
+    your_price_col = df.columns.get_loc("Your Price (PHP)") + 1 if "Your Price (PHP)" in df.columns else None
+    original_price_col = df.columns.get_loc("Original Price (PHP)") + 1 if "Original Price (PHP)" in df.columns else None
+    use_price_col = df.columns.get_loc("Use Price (PHP)") + 1 if "Use Price (PHP)" in df.columns else None
 
-    for row_idx, row in enumerate(rows, start=2):
-        for col_idx, header in enumerate(headers, start=1):
-            value = row.get(header, "")
-            if header == "Use Price (PHP)" and your_price_col and original_price_col:
+    for row_idx, (_, row) in enumerate(df.iterrows(), start=2):
+        for col_idx, column in enumerate(df.columns, start=1):
+            value = row[column]
+            if pd.isna(value):
+                value = None
+            if column == "Use Price (PHP)" and your_price_col and original_price_col:
                 your_ref = f"{get_column_letter(your_price_col)}{row_idx}"
-                orig_ref = f"{get_column_letter(original_price_col)}{row_idx}"
-                ws.cell(row=row_idx, column=col_idx, value=f'=IF({your_ref}="",{orig_ref},{your_ref})')
+                original_ref = f"{get_column_letter(original_price_col)}{row_idx}"
+                ws.cell(row=row_idx, column=col_idx, value=f'=IF({your_ref}="",{original_ref},{your_ref})')
             else:
                 ws.cell(row=row_idx, column=col_idx, value=value)
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"
 
-    price_headers = {"Original Price (PHP)", "Your Price (PHP)", "Use Price (PHP)"}
-    for col_idx, header in enumerate(headers, start=1):
-        if header in price_headers:
+    for col_idx, column in enumerate(df.columns, start=1):
+        if column in {"Original Price (PHP)", "Your Price (PHP)", "Use Price (PHP)"}:
             for row_idx in range(2, ws.max_row + 1):
                 ws.cell(row=row_idx, column=col_idx).number_format = '₱#,##0.00'
+        if column == "Confidence":
+            for row_idx in range(2, ws.max_row + 1):
+                ws.cell(row=row_idx, column=col_idx).number_format = '0%'
 
-    for idx, header in enumerate(headers, start=1):
-        max_len = max(len(_clean_text(header)), *(len(_clean_text(ws.cell(r, idx).value)) for r in range(2, min(ws.max_row, 250) + 1)))
-        ws.column_dimensions[get_column_letter(idx)].width = min(max(max_len + 2, 10), 40)
+    for col_idx, column in enumerate(df.columns, start=1):
+        max_len = max(len(_clean_text(column)), *(len(_clean_text(ws.cell(r, col_idx).value)) for r in range(2, min(ws.max_row, 250) + 1)))
+        ws.column_dimensions[get_column_letter(col_idx)].width = min(max(max_len + 2, 10), 42)
 
+
+
+def build_workbook(applications_df: pd.DataFrame, raw_df: pd.DataFrame, review_df: Optional[pd.DataFrame] = None) -> Workbook:
+    wb = Workbook()
+    wb.remove(wb.active)
+    _write_df_to_sheet(wb, "Applications", applications_df)
+    _write_df_to_sheet(wb, "Catalog Rows", raw_df)
+    _write_df_to_sheet(wb, "Review Queue", review_df if review_df is not None else applications_df.iloc[0:0])
     return wb
 
 
+
 def workbook_to_bytes(wb: Workbook) -> bytes:
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
+    buffer = io.BytesIO()
+    wb.save(buffer)
+    return buffer.getvalue()
 
 
-def convert_pdf_to_excel_bytes(
-    pdf_path: str | Path,
-    mapping: Optional[Dict[str, str]] = None,
-    mode: str = "normalized",
-    preserve_unknown: bool = True,
-) -> Tuple[bytes, ParsedDocument, List[str], List[Dict[str, object]]]:
-    doc = extract_document(pdf_path)
-    final_mapping = mapping or build_suggested_mapping(doc.detected_headers)
-    headers, rows = apply_mapping(doc, final_mapping, mode=mode, preserve_unknown=preserve_unknown)
-    wb = build_workbook(headers, rows)
-    return workbook_to_bytes(wb), doc, headers, rows
+
+def build_demo_excel(pdf_path: str | Path, output_path: str | Path) -> None:
+    parsed = parse_catalog_pdf(pdf_path)
+    applications_df = applications_dataframe(parsed.application_rows)
+    raw_df = raw_rows_dataframe(parsed.raw_rows)
+    review_df = pd.DataFrame(parsed.review_rows, columns=MAIN_COLUMNS)
+    wb = build_workbook(applications_df, raw_df, review_df)
+    wb.save(str(output_path))

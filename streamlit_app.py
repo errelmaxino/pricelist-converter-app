@@ -756,21 +756,21 @@ if uploaded is not None:
         review_export_df = final_applications_df[final_applications_df["Review Status"] != "Auto-Accepted"].copy()
 
         export_cols = st.columns([1, 1, 1])
-       if export_cols[0].button(
-            "Save current supplier rule/template",
-            use_container_width=True,
-            key="export_save_supplier_rule",
-        ):
-            err = _save_current_supplier_memory(
-                supplier_name,
-                profile_notes,
-                custom_aliases,
-                protected_phrases,
-        )
-        if err:
-            st.warning(err)
-        else:
-            st.success("Supplier memory/template saved.")
+                if export_cols[0].button(
+                    "Save current supplier rule/template",
+                    use_container_width=True,
+                    key="export_save_supplier_rule",
+                ):
+                    err = _save_current_supplier_memory(
+                        supplier_name,
+                        profile_notes,
+                        custom_aliases,
+                        protected_phrases,
+                    )
+                    if err:
+                        st.warning(err)
+                    else:
+                        st.success("Supplier memory/template saved.")
         if export_cols[1].button("Accept all 95%+ before export", use_container_width=True):
             count = _apply_bulk_accept_95()
             final_applications_df = _working_df().copy()

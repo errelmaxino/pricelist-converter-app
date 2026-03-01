@@ -600,16 +600,21 @@ if uploaded is not None:
                 _set_review_status(selected_indices, "Needs Review")
                 _append_pattern_note(selected_indices, "AI proposal rejected during review")
                 st.success(f"Rejected AI proposal for {len(selected_indices)} selected row(s).")
-                if row_action_cols[3].button(
-    "Save current supplier rule/template",
-    use_container_width=True,
-    key="dashboard_save_supplier_rule",
-): 
-                err = _save_current_supplier_memory(supplier_name, profile_notes, custom_aliases, protected_phrases)
+            if row_action_cols[3].button(
+                "Save current supplier rule/template",
+                use_container_width=True,
+                key="dashboard_save_supplier_rule",
+            ):
+                err = _save_current_supplier_memory(
+                    supplier_name,
+                    profile_notes,
+                    custom_aliases,
+                    protected_phrases,
+                )
                 if err:
-                    st.error(err)
+                    st.warning(err)
                 else:
-                    st.success(f"Saved supplier memory for {supplier_name.strip()}.")
+                    st.success("Supplier memory/template saved.")
 
             st.dataframe(queue_df, use_container_width=True, hide_index=True)
 
@@ -752,15 +757,20 @@ if uploaded is not None:
 
         export_cols = st.columns([1, 1, 1])
        if export_cols[0].button(
-    "Save current supplier rule/template",
-    use_container_width=True,
-    key="export_save_supplier_rule",
-):
-            err = _save_current_supplier_memory(supplier_name, profile_notes, custom_aliases, protected_phrases)
-            if err:
-                st.error(err)
-            else:
-                st.success(f"Saved supplier memory for {supplier_name.strip()}.")
+            "Save current supplier rule/template",
+            use_container_width=True,
+            key="export_save_supplier_rule",
+        ):
+            err = _save_current_supplier_memory(
+                supplier_name,
+                profile_notes,
+                custom_aliases,
+                protected_phrases,
+        )
+        if err:
+            st.warning(err)
+        else:
+            st.success("Supplier memory/template saved.")
         if export_cols[1].button("Accept all 95%+ before export", use_container_width=True):
             count = _apply_bulk_accept_95()
             final_applications_df = _working_df().copy()

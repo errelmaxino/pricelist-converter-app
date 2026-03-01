@@ -600,7 +600,11 @@ if uploaded is not None:
                 _set_review_status(selected_indices, "Needs Review")
                 _append_pattern_note(selected_indices, "AI proposal rejected during review")
                 st.success(f"Rejected AI proposal for {len(selected_indices)} selected row(s).")
-            if row_action_cols[3].button("Save current supplier rule/template", use_container_width=True):
+                if row_action_cols[3].button(
+    "Save current supplier rule/template",
+    use_container_width=True,
+    key="dashboard_save_supplier_rule",
+): 
                 err = _save_current_supplier_memory(supplier_name, profile_notes, custom_aliases, protected_phrases)
                 if err:
                     st.error(err)
@@ -747,7 +751,11 @@ if uploaded is not None:
         review_export_df = final_applications_df[final_applications_df["Review Status"] != "Auto-Accepted"].copy()
 
         export_cols = st.columns([1, 1, 1])
-        if export_cols[0].button("Save current supplier rule/template", use_container_width=True):
+       if export_cols[0].button(
+    "Save current supplier rule/template",
+    use_container_width=True,
+    key="export_save_supplier_rule",
+):
             err = _save_current_supplier_memory(supplier_name, profile_notes, custom_aliases, protected_phrases)
             if err:
                 st.error(err)

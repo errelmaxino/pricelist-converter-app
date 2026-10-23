@@ -1209,7 +1209,10 @@ def _write_df_to_sheet(wb: Workbook, title: str, df: pd.DataFrame) -> None:
                 original_ref = f"{get_column_letter(original_price_col)}{row_idx}"
                 ws.cell(row=row_idx, column=col_idx, value=f'=IF({your_ref}="",{original_ref},{your_ref})')
             else:
-                ws.cell(row=row_idx, column=col_idx, value=value)
+                cell = ws.cell(row=row_idx, column=col_idx, value=value)
+                if isinstance(value, str):
+                    # Supplier text is data, even when it starts with '='.
+                    cell.data_type = "s"
 
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(ws.max_column)}{ws.max_row}"

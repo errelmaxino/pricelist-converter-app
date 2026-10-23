@@ -74,7 +74,11 @@ def _cached_parse_catalog(
     protected_phrases: tuple[str, ...],
 ) -> ParsedCatalog:
     with tempfile.TemporaryDirectory() as tmpdir:
-        pdf_path = Path(tmpdir) / file_name
+        # Upload metadata is untrusted; keep writes inside our temporary directory.
+        safe_name = Path(file_name).name
+        if safe_name in {"", ".."}:
+            safe_name = "catalog.pdf"
+        pdf_path = Path(tmpdir) / safe_name
         pdf_path.write_bytes(file_bytes)
         return parse_catalog_pdf(
             pdf_path,

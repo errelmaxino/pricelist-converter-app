@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 import streamlit as st
+
+from ai_review import build_review_prompt, validate_review_proposal
+from tests.synthetic_catalog_fixture import generated_pdf
 
 from parser import (
     ParsedCatalog,
@@ -19,7 +23,7 @@ from parser import (
 )
 from storage import export_profiles_json, get_profile, import_profiles_json, list_profiles, save_profile
 
-st.set_page_config(page_title="Smart Automotive Pricelist PDF to Excel", page_icon="🧩", layout="wide")
+st.set_page_config(page_title="Automotive Parts Data Quality Lab", page_icon="🧩", layout="wide")
 
 
 EDITABLE_FIELDS = [
@@ -92,7 +96,7 @@ def _signature(file_name: str, file_bytes: bytes, supplier_name: str, profile_no
     return "|".join(
         [
             file_name,
-            str(len(file_bytes)),
+            hashlib.sha256(file_bytes).hexdigest(),
             supplier_name.strip(),
             profile_notes.strip(),
             repr(sorted(custom_aliases.items())),
@@ -141,7 +145,7 @@ def _conflict_key_set(conflict_df: pd.DataFrame) -> set[str]:
 
 def _row_key_for_idx(df: pd.DataFrame, idx: int) -> str:
     row = df.loc[idx]
-    return f"P{row['Page']}|{row['Code']}|{idx+1}"
+    return str(row["Row Key"])
 
 
 
@@ -330,9 +334,9 @@ def _status_metrics(df: pd.DataFrame) -> dict[str, int]:
     }
 
 
-st.title("Smart Automotive Pricelist PDF to Excel")
+st.title("Automotive Parts Data Quality Lab")
 st.caption(
-    "Accuracy-first conversion for automotive PDF catalogs: layout-aware extraction, segment splitting, protected phrases, field validators, supplier memory, conflict logs, review queues, and faster approval controls."
+    "Source-based PDF catalog normalization, field evidence and human review. Rule confidence is NOT OEM fitment validation."
 )
 
 with st.sidebar:
@@ -396,6 +400,15 @@ with setup_center:
             placeholder="Example: BONGO 2000",
         )
 
+st.markdown("**Explore safely with invented data**")
+st.caption("The sample is generated locally and includes no real supplier pricing, customer records or verified fitment information.")
+st.download_button(
+    "Download synthetic sample PDF",
+    data=generated_pdf(),
+    file_name="synthetic-automotive-catalog.pdf",
+    mime="application/pdf",
+    key="download_synthetic_catalog",
+)
 uploaded = st.file_uploader("Upload automotive pricelist PDF", type=["pdf"])
 custom_aliases = _parse_alias_text(alias_text)
 protected_phrases = [line.strip() for line in protected_text.splitlines() if line.strip()]
@@ -422,6 +435,7 @@ if uploaded is not None:
 
     metrics = _status_metrics(working_df)
     st.subheader("Conversion summary")
+    st.warning("A high rule confidence score does NOT confirm vehicle fitment or real-world parsing accuracy. Check uncertainty and source evidence.")
     metric_cols = st.columns(6)
     metric_cols[0].metric("Catalog rows", parsed.metrics.get("catalog_rows", len(raw_df)))
     metric_cols[1].metric("Application rows", parsed.metrics.get("application_rows", len(working_df)))
@@ -447,6 +461,7 @@ if uploaded is not None:
             "5) Raw catalog rows",
             "6) Conflict log",
             "7) Export",
+            "8) AI review (opt-in)",
         ]
     )
 
@@ -530,7 +545,7 @@ if uploaded is not None:
                 "Your Price (PHP)": st.column_config.NumberColumn("Your Price (PHP)", format="₱ %.2f"),
                 "Use Price (PHP)": st.column_config.NumberColumn("Use Price (PHP)", format="₱ %.2f"),
             },
-            disabled=["Source Line", "Supplier Brand", "Category", "Code", "Original Price (PHP)", "Page", "Confidence", "Review Status", "Pattern Notes"],
+            disabled=["Source Line", "Supplier Brand", "Category", "Code", "Original Price (PHP)", "Page", "Confidence", "Review Status", "Pattern Notes", "Row Key"],
             key="applications_editor_v7",
         )
         _merge_editor_subset(edited_subset)
@@ -638,7 +653,7 @@ if uploaded is not None:
         current_df = _working_df()
         queue_idxs = _queue_indices(current_df)
         if not queue_idxs:
-            st.success("All rows are currently auto-accepted. You can still review the Split Preview or export the workbook.")
+            st.success("All rows are marked rule-accepted. They are not independently verified fitment records.")
         else:
             detail_label_map = _label_map(current_df.loc[queue_idxs])
             labels = list(detail_label_map.keys())
@@ -794,3 +809,99 @@ if uploaded is not None:
             "- **Conflict Log**: ambiguity, validation, or inference warnings  \n"
             "- **Evidence Log**: field-by-field reasons and confidence"
         )
+
+    with tabs[7]:
+        st.subheader("AI review suggestions — optional and human-controlled")
+        st.info(
+            "No AI provider is called by this app. You can copy a single-row prompt "
+            "to a provider you choose and paste the result back. Suggestions are NOT "
+            "verified vehicle fitment, and nothing is sent automatically."
+        )
+        st.warning(
+            "Only share synthetic data or supplier information you are explicitly authorized "
+            "to disclose. The selected catalog line is included in the prompt."
+        )
+        current_rows = _working_df()
+        if not current_rows.empty:
+            labels = {
+                f"{row['Row Key']} · {row['Brand'] or '(unknown)'} · {row['Model'] or '(blank)'}": idx
+                for idx, row in current_rows.iterrows()
+            }
+            selected_label = st.selectbox("Select exactly one catalog row", list(labels), key="ai_review_selected_row")
+            selected_idx = labels[selected_label]
+            selected_row = current_rows.loc[selected_idx].to_dict()
+            allowed = st.checkbox(
+                "I will use only synthetic or authorized source data in an external AI provider.",
+                value=False,
+                key="ai_review_disclosure_confirm",
+            )
+            if allowed:
+                prompt = build_review_prompt(selected_row)
+                st.code(prompt, language="text")
+                st.download_button(
+                    "Download single-row prompt",
+                    data=prompt,
+                    file_name="parts_data_review_prompt.txt",
+                    mime="text/plain",
+                    key="ai_review_download_prompt",
+                )
+                proposed_json = st.text_area(
+                    "Paste the provider's JSON suggestion here",
+                    height=170,
+                    placeholder='{"row_key": "...", "source_line": "...", "evidence_quote": "...", "proposed_fields": {}, "reason": "..."}',
+                    key="ai_review_json_input",
+                )
+                if st.button("Validate suggestion against this source row", key="ai_review_validate"):
+                    try:
+                        verified_shape = validate_review_proposal(proposed_json, selected_row)
+                        st.session_state["ai_review_verified_proposal"] = {
+                            "file_signature": sig,
+                            "row_key": selected_row["Row Key"],
+                            "proposal": verified_shape,
+                        }
+                        st.success("Source/format checks passed. These checks do NOT prove the proposed values are correct.")
+                    except ValueError as exc:
+                        st.session_state.pop("ai_review_verified_proposal", None)
+                        st.error(str(exc))
+                candidate = st.session_state.get("ai_review_verified_proposal")
+                if (
+                    candidate
+                    and candidate["file_signature"] == sig
+                    and candidate["row_key"] == selected_row["Row Key"]
+                    and candidate["proposal"]["source_line"] == selected_row["Source Line"]
+                ):
+                    suggestion = candidate["proposal"]
+                    if suggestion["proposed_fields"]:
+                        st.write("**Proposed edits (not yet applied):**", suggestion["proposed_fields"])
+                        st.write("**Exact source excerpt:**", suggestion["evidence_quote"])
+                        st.write("**Model's explanation:**", suggestion["reason"])
+                        confirmed = st.checkbox(
+                            "I checked the source myself and approve applying these fields. "
+                            "The row will still require review before being considered ready.",
+                            value=False,
+                            key=f"ai_review_manual_approve_{selected_row['Row Key']}",
+                        )
+                        if st.button(
+                            "Apply my approved edits (keep row in review)",
+                            disabled=not confirmed,
+                            key="ai_review_apply",
+                        ):
+                            latest = _working_df().copy()
+                            if (
+                                latest.loc[selected_idx, "Row Key"] == suggestion["row_key"]
+                                and latest.loc[selected_idx, "Source Line"] == suggestion["source_line"]
+                            ):
+                                for field, proposed_value in suggestion["proposed_fields"].items():
+                                    latest.at[selected_idx, field] = proposed_value
+                                latest.at[selected_idx, "Review Status"] = "Needs Review"
+                                old_note = str(latest.at[selected_idx, "Pattern Notes"] or "")
+                                latest.at[selected_idx, "Pattern Notes"] = (
+                                    old_note + "; source-checked AI-assisted suggestion manually applied"
+                                ).strip("; ")
+                                _set_working_df(latest)
+                                st.session_state.pop("ai_review_verified_proposal", None)
+                                st.success("Edits saved locally for this session. Row remains Needs Review.")
+                            else:
+                                st.error("The source row changed. Validate again before applying.")
+                    else:
+                        st.info("The model proposed no changes. No data was modified.")

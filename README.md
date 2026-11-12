@@ -1,52 +1,99 @@
-# Smart Automotive Pricelist PDF to Excel - Accuracy First
+# Automotive Parts Catalog Quality — PDF to Reviewable Data
 
-This Streamlit app is for automotive catalog PDFs where one source line may contain multiple compatible vehicles and shorthand catalog text.
+**A practical, accuracy-first project for cleaning messy automotive supplier catalogs.**
 
-## What this version improves
-- Layout-aware row extraction using page coordinates
-- Separate raw catalog extraction from normalized application output
-- Segment-level slash parsing so one line can become multiple compatible rows
-- Protected phrase handling so items like `BONGO 2000`, `CUBE 1.5`, and `MIRAGE G4` are not incorrectly treated as years
-- Dedicated shorthand-year parsing such as `07'`, `'07`, `93'-UP`, and `78'-88'`
-- Brand abbreviation handling such as `TOY`, `MIT`, `NIS`
-- Field validators for Year, Engine, Axle, Side, Vertical, and Mount
-- Field-level evidence logging and conflict logging
-- Supplier memory for custom aliases and protected phrases
+[Read the case study](docs/PORTFOLIO_CASE_STUDY.md) · [Quality audit](docs/QUALITY_AUDIT_2026-11-12.md) · [90-second demo plan](docs/DEMO_WALKTHROUGH.md) · [Synthetic benchmark](scripts/quality_scorecard.py)
 
+## The problem
 
-## Faster review controls in this package
-- Bulk actions: `Accept all 95%+ rows`, `Accept all safe rule matches`
-- Quick filters: `Show only conflicts`, `Show only blank important fields`, `Show only low confidence rows`
-- Review dashboard row actions: `Accept selected rows`, `Mark selected for review`, `Reject AI proposal`
-- Row detail actions: `Save row edits`, `Accept row`, `Accept selected fields`, `Keep selected fields blank`, `Next review row`, `Save current supplier rule/template`
-- Session edits are preserved in the current run and included in the exported Excel workbook
+In parts retail, a single PDF catalog entry can refer to several vehicle models, contain abbreviated brand names, or mix a model name with a year and engine code. Copying it into a spreadsheet by hand is slow; treating every parsed string as a verified vehicle fitment is unsafe.
 
-## Workbook output
-The exported workbook includes:
-- `Applications`
-- `Catalog Rows`
-- `Review Queue`
-- `Conflict Log`
-- `Evidence Log`
+**Question this project explores:** How can we turn a supplier PDF into structured, inspectable records *while keeping uncertainty and source evidence visible*?
 
-## App files
-- `streamlit_app.py` - main app
-- `parser.py` - PDF extraction, segmentation, normalization, evidence/conflict generation
-- `storage.py` - supplier memory storage
-- `requirements.txt`
-- `runtime.txt`
-- `demo_output.xlsx`
+## What the existing application does
 
-## Deploy on Streamlit Cloud
-1. Create a public GitHub repository
-2. Upload all extracted files from this folder
-3. Go to https://share.streamlit.io/
-4. Sign in with GitHub
-5. Create a new app and choose `streamlit_app.py` as the main file
-6. Deploy
+1. **Extract:** Read text-based automotive PDF catalogs and retain raw catalog lines and page numbers.
+2. **Normalize:** Interpret supported brand aliases, shorthand years, positions, engine tokens, and slash-separated vehicle applications.
+3. **Check:** Validate field formats, record field-level evidence and conflicts, and assign heuristic confidence scores.
+4. **Review:** Show editable rows, missing important fields and low-confidence records for a human to inspect.
+5. **Optional AI suggestion:** Generate a cautious one-row prompt for an outside model, validate its JSON response against the same source record, and require explicit human approval. **No AI API is called and no data is sent automatically.**
+6. **Export:** Produce an Excel workbook with Applications, Catalog Rows, Review Queue, Conflict Log and Evidence Log sheets, with stable Row Keys for traceability.
 
-## Notes
-- Best for text-based PDF catalogs
-- This package is rule-based and confidence-based
-- It does not call external AI APIs or live web search
-- Supplier memory is stored locally in SQLite; export backups from inside the app if needed
+The code is Python + Streamlit, with pdfplumber for PDF extraction, pandas for tables, openpyxl for Excel export, and local SQLite supplier-specific parsing preferences.
+
+## A small synthetic example
+
+| Source description *(invented for illustration)* | Structured candidates |
+| --- | --- |
+| `TOY COROLLA '07 / MIT LANCER '08` | Toyota Corolla, 2007; Mitsubishi Lancer, 2008 |
+| `MAZ BONGO 2000` | Mazda Bongo 2000 (model wording preserved; **not** assumed to mean model year 2000) |
+| `COROLLA 2007` | Brand ambiguous; requires human review rather than inventing a fitment |
+
+These are **synthetic rule examples**, not supplier records or proof of fitment. See the [automated data-quality tests](tests/test_catalog_quality.py). The parser's confidence measures rule extraction, **not** confirmation from an OEM/vehicle database.
+
+## Try it
+
+Python 3.11 is specified in `runtime.txt`.
+
+```bash
+python -m pip install -r requirements.txt
+streamlit run streamlit_app.py
+```
+
+Click **Download synthetic sample PDF** in the local Streamlit app, then upload that invented PDF to try the complete workflow safely. Inspect review, evidence and conflict tabs, then export the workbook. There is **no verified publicly hosted live demo**; this is a source repository and local-run workflow.
+
+For repository checks:
+
+```bash
+python -m unittest discover -s tests -v
+python scripts/quality_scorecard.py
+```
+
+**Synthetic-only checkpoint:** Eight invented catalog lines yield nine expected application rows. At the recorded GitHub check, all nine exactly matched expected (code, brand, model, year) records, one unresolved brand remained in human review, and all nine records carried unique evidence-linking IDs. This is **not real supplier or manufacturer-fitment accuracy**. [CI evidence](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43189215988). Security regression tests additionally check upload-path confinement and literal Excel text serialization.
+
+## What the project demonstrates
+
+- Translating automotive parts catalog problems into explicit parsing and validation rules.
+- Retaining original source references when transforming messy information.
+- Separating **extracted**, **inferred**, **conflicted**, and **human-reviewed** information.
+- Choosing a human review queue instead of claiming uncertain vehicle compatibility.
+- Iterating safely: public security fixes were merged in [PR #1](https://github.com/errelmaxino/pricelist-converter-app/pull/1).
+- Fixing a real catalog-cleaning defect: new synthetic tests exposed a stray apostrophe left in model names after quoted shorthand-year parsing. The parser was corrected, with [9/9 tests passing on Python 3.11 and 3.12](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43185239223) on the draft branch. No live fitment accuracy was claimed.
+
+**Project approach:** The problem and product direction come from hands-on automotive parts retail and supplier-data workflows. Development is AI-assisted and owner-directed; this repository is not presented as proof of solo professional software engineering.
+
+## Why this matters to a parts-data quality team
+
+The value isn't simply turning a PDF into a spreadsheet. A reliable record should be **traceable, reviewable and safe to correct** before a downstream user trusts it.
+
+| Real data-work problem | What this prototype demonstrates | Potential benefit *if confirmed on real data* |
+| --- | --- | --- |
+| An abbreviated model/year can be misread | Supported shorthand normalization, protected model names, and tests that exposed a stray-quote defect | Less manual rechecking and fewer wrong fields passed downstream |
+| One supplier code appears on different source lines | Distinct row IDs linked to original source, review and evidence logs | Faster investigation without mixing up evidence between records |
+| A missing or uncertain vehicle attribute is tempting to guess | Unresolved records remain in a human review queue | Fewer unsupported matches or premature approvals |
+| A repeated correction is easy to forget | Supplier-specific preferences, documented rules and regression tests | More consistent handling across repeated work |
+| An AI-generated suggestion looks plausible but may be wrong | Optional, source-matched proposals that require explicit human approval | A safer starting point for review *if* a future measured comparison shows value |
+
+**Potential time/cost outcomes are not measured here.** This project has not demonstrated fewer wrong parts orders, a faster production workflow or real-world fitment accuracy. It shows an approach to reducing the **sources of unnecessary review and rework**.
+
+A real-world pilot should track: time per disputed record, percentage resolved with authoritative evidence, repeated corrections, evidence-to-row linkage failures, wrongly accepted records and downstream escalations. Compare against a documented baseline before claiming savings. Manufacturer supersessions, exact variant fitment and OEM lookup are outside this prototype's coverage.
+
+## Honest limitations
+
+- **Not a complete Smart Parts Finder**: it does not verify whether a part fits a particular vehicle using OEM catalogs, VIN decoding, or authoritative cross-reference databases.
+- Optimized for supported **text-based PDF** layouts; scanned/image-only PDFs require separate OCR that is **not implemented**.
+- Confidence scores are heuristic extraction scores, **not fitment guarantees or independently validated accuracy rates**.
+- Supplier-specific aliases and profiles are locally stored; there is no verified live data sync to AMX, retailer inventory, or external AI service.
+- The existing `demo_output.xlsx` is a historical artifact. Its data provenance and permission for reuse in a public portfolio **have not been independently verified**; do not republish or treat it as an approved sample.
+- The row-key fix is covered by synthetic tests; deployed Streamlit acceptance and real supplier-data accuracy remain unverified. The synthetic tests do not cover all supplier layouts.
+- The optional AI review is **manual copy/paste and user-approved**, not an autonomous AI endpoint or a licensed fitment database.
+
+## Next improvements (not yet implemented)
+
+1. Verify the public workbook's provenance and redistribution rights; remember removing it from a branch does not erase Git history.
+2. Use a permission-cleared, independently labeled supplier sample to measure actual extraction errors, omissions and review workload.
+3. Run an independent review plus live Streamlit/browser QA before merging this draft portfolio PR.
+4. Consider a controlled paid AI API **only if** a labeled comparison proves that its suggestions improve accuracy or reduce review effort without unacceptable data-sharing or cost.
+5. Require authoritative manufacturer/fitment references before any real compatibility claim.
+
+See the [portfolio case study](docs/PORTFOLIO_CASE_STUDY.md) for the business context, design tradeoffs and proof boundaries.

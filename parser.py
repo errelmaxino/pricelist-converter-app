@@ -145,6 +145,7 @@ MAIN_COLUMNS = [
     "Confidence",
     "Review Status",
     "Pattern Notes",
+    "Row Key",
 ]
 
 RAW_COLUMNS = [
@@ -990,7 +991,7 @@ def expand_catalog_rows(
     evidence_rows: List[Dict[str, object]] = []
     conflict_rows: List[Dict[str, object]] = []
 
-    for row in raw_rows:
+    for source_row_number, row in enumerate(raw_rows, start=1):
         segments, split_notes = _split_segments(row.description, aliases)
         carry_brand = ""
         for segment_order, segment in enumerate(segments, start=1):
@@ -1004,9 +1005,10 @@ def expand_catalog_rows(
             if parsed["Brand"]:
                 carry_brand = str(parsed["Brand"])
 
-            row_key = f"P{row.page}|{row.code}|{segment_order}"
+            row_key = f"P{row.page}|R{source_row_number}|{row.code}|{segment_order}"
             app_row = {
                 "_Row Key": row_key,
+                "Row Key": row_key,
                 "Source Line": row.source_line,
                 "Supplier Brand": row.supplier_brand,
                 "Category": row.category,

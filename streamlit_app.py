@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ai_review import build_review_prompt, validate_review_proposal
+from tests.synthetic_catalog_fixture import generated_pdf
 
 from parser import (
     ParsedCatalog,
@@ -399,6 +400,15 @@ with setup_center:
             placeholder="Example: BONGO 2000",
         )
 
+st.markdown("**Explore safely with invented data**")
+st.caption("The sample is generated locally and includes no real supplier pricing, customer records or verified fitment information.")
+st.download_button(
+    "Download synthetic sample PDF",
+    data=generated_pdf(),
+    file_name="synthetic-automotive-catalog.pdf",
+    mime="application/pdf",
+    key="download_synthetic_catalog",
+)
 uploaded = st.file_uploader("Upload automotive pricelist PDF", type=["pdf"])
 custom_aliases = _parse_alias_text(alias_text)
 protected_phrases = [line.strip() for line in protected_text.splitlines() if line.strip()]

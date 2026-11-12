@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 from pathlib import Path
 from typing import Iterable
@@ -94,7 +95,7 @@ def _signature(file_name: str, file_bytes: bytes, supplier_name: str, profile_no
     return "|".join(
         [
             file_name,
-            str(len(file_bytes)),
+            hashlib.sha256(file_bytes).hexdigest(),
             supplier_name.strip(),
             profile_notes.strip(),
             repr(sorted(custom_aliases.items())),

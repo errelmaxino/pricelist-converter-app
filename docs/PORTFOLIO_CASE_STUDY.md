@@ -56,10 +56,20 @@ The [synthetic regression checks](../tests/test_catalog_quality.py) and [generat
 
 The tracked `demo_output.xlsx` has not been cleared for disclosure; use only synthetic data for presentations and interviews until its rights and contents are reviewed.
 
-## 7. What this says about the project owner
+## 7. What value might this create — and how would we prove it?
+
+The intended benefit is upstream quality: detect ambiguity early, preserve the exact source used for a correction, avoid mixing records that share a part code and make recurring problems easier to test. If those checks work on authorized, real-world data, parts researchers could spend less time repeating investigations; downstream teams could receive fewer incomplete or misleading records.
+
+That is a **hypothesis, not a measured outcome**. There is no evidence that this prototype has already saved staff hours, prevented wrong orders, increased margin or improved Partly's data. Its existing benchmark measures only the exact normalization of nine invented application records.
+
+A credible value test would capture, *before and after a change*: (1) minutes per corrected record; (2) proportion of records whose correction has a readable source; (3) false acceptances and unresolved exceptions; (4) number of repeat corrections to the same error pattern; and (5) escalations or downstream rework when this can be traced without exposing sensitive supplier/customer data.
+
+For manufacturer catalog work, an approved authoritative reference is still required for actual part-to-vehicle verification or supersession chains. Our PDF tool cannot establish either.
+
+## 8. What this says about the project owner
 
 The core motivation came from real motorcycle/automotive retail operations: translating shorthand product lists, dealing with inventory record discrepancies, and helping customers identify compatible parts. The owner framed the workflow and directed **AI-assisted development**. This is a domain-led, learning-driven project—not a claim of personally authoring every line of code or having worked professionally as an OEM catalog data specialist.
 
-## 8. Natural next step
+## 9. Natural next step
 
 The synthetic PDF, end-to-end tests and traceability checks are now implemented on draft PR #2. The [safe demo walkthrough](DEMO_WALKTHROUGH.md) describes an employer-friendly 90-second story. Next clear the already-public demo workbook's data/rights, independently review the changes, and manually verify Streamlit screens and exports before sharing externally. Only then consider real labeled catalogs or a paid AI endpoint.

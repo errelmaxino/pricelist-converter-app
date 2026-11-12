@@ -62,6 +62,22 @@ python scripts/quality_scorecard.py
 
 **Project approach:** The problem and product direction come from hands-on automotive parts retail and supplier-data workflows. Development is AI-assisted and owner-directed; this repository is not presented as proof of solo professional software engineering.
 
+## Why this matters to a parts-data quality team
+
+The value isn't simply turning a PDF into a spreadsheet. A reliable record should be **traceable, reviewable and safe to correct** before a downstream user trusts it.
+
+| Real data-work problem | What this prototype demonstrates | Potential benefit *if confirmed on real data* |
+| --- | --- | --- |
+| An abbreviated model/year can be misread | Supported shorthand normalization, protected model names, and tests that exposed a stray-quote defect | Less manual rechecking and fewer wrong fields passed downstream |
+| One supplier code appears on different source lines | Distinct row IDs linked to original source, review and evidence logs | Faster investigation without mixing up evidence between records |
+| A missing or uncertain vehicle attribute is tempting to guess | Unresolved records remain in a human review queue | Fewer unsupported matches or premature approvals |
+| A repeated correction is easy to forget | Supplier-specific preferences, documented rules and regression tests | More consistent handling across repeated work |
+| An AI-generated suggestion looks plausible but may be wrong | Optional, source-matched proposals that require explicit human approval | A safer starting point for review *if* a future measured comparison shows value |
+
+**Potential time/cost outcomes are not measured here.** This project has not demonstrated fewer wrong parts orders, a faster production workflow or real-world fitment accuracy. It shows an approach to reducing the **sources of unnecessary review and rework**.
+
+A real-world pilot should track: time per disputed record, percentage resolved with authoritative evidence, repeated corrections, evidence-to-row linkage failures, wrongly accepted records and downstream escalations. Compare against a documented baseline before claiming savings. Manufacturer supersessions, exact variant fitment and OEM lookup are outside this prototype's coverage.
+
 ## Honest limitations
 
 - **Not a complete Smart Parts Finder**: it does not verify whether a part fits a particular vehicle using OEM catalogs, VIN decoding, or authoritative cross-reference databases.

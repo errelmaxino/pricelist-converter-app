@@ -141,7 +141,7 @@ def _conflict_key_set(conflict_df: pd.DataFrame) -> set[str]:
 
 def _row_key_for_idx(df: pd.DataFrame, idx: int) -> str:
     row = df.loc[idx]
-    return f"P{row['Page']}|{row['Code']}|{idx+1}"
+    return str(row["Row Key"])
 
 
 
@@ -530,7 +530,7 @@ if uploaded is not None:
                 "Your Price (PHP)": st.column_config.NumberColumn("Your Price (PHP)", format="₱ %.2f"),
                 "Use Price (PHP)": st.column_config.NumberColumn("Use Price (PHP)", format="₱ %.2f"),
             },
-            disabled=["Source Line", "Supplier Brand", "Category", "Code", "Original Price (PHP)", "Page", "Confidence", "Review Status", "Pattern Notes"],
+            disabled=["Source Line", "Supplier Brand", "Category", "Code", "Original Price (PHP)", "Page", "Confidence", "Review Status", "Pattern Notes", "Row Key"],
             key="applications_editor_v7",
         )
         _merge_editor_subset(edited_subset)

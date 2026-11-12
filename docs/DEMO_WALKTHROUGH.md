@@ -12,6 +12,16 @@
 | 55–75 s | [GitHub Actions result](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43189215988) and quality scorecard | “We found real errors through synthetic tests: shorthand years and record-to-evidence links. We fixed those and kept regression checks.” |
 | 75–90 s | Optional AI tab, source quote and explicit approval UI | “AI can suggest a correction, but it cannot replace a trusted source or human verification. The app never silently applies a change.” |
 
+## What the hiring manager should take away
+
+- **Parts domain:** The project comes from practical vehicle/part questions and messy supplier listings—not from trying to build an AI gadget.
+- **Accuracy process:** Source line → proposed structured record → exceptions/evidence → human decision. A candidate record isn't the same as verified fitment.
+- **Quality improvement:** Synthetic tests identified a year-token defect and traceability problems; corrections now have repeatable checks.
+- **Potential business impact:** Fewer repeated checks, clearer correction handoffs and fewer misleading downstream records are plausible benefits, **not savings measured by this app**.
+- **How to prove value at work:** Establish a baseline for review minutes per discrepancy, source-evidence completeness, reopened cases and wrong acceptances. Compare after a narrowly defined change.
+
+For Partly, connect those points to manufacturer catalog standards and trustworthy parts decisions. Do **not** suggest that the sample PDF tests real vehicle fitment, or that this project matches Partly's OEM data or model accuracy.
+
 ## Safe demo sequence
 
 1. Run `streamlit run streamlit_app.py` locally using the README instructions.

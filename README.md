@@ -56,6 +56,7 @@ The synthetic tests exercise the existing normalization and review logic without
 - Separating **extracted**, **inferred**, **conflicted**, and **human-reviewed** information.
 - Choosing a human review queue instead of claiming uncertain vehicle compatibility.
 - Iterating safely: public security fixes were merged in [PR #1](https://github.com/errelmaxino/pricelist-converter-app/pull/1).
+- Fixing a real catalog-cleaning defect: new synthetic tests exposed a stray apostrophe left in model names after quoted shorthand-year parsing. The parser was corrected, with [9/9 tests passing on Python 3.11 and 3.12](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43185239223) on the draft branch. No live fitment accuracy was claimed.
 
 **Project approach:** The problem and product direction come from hands-on automotive parts retail and supplier-data workflows. Development is AI-assisted and owner-directed; this repository is not presented as proof of solo professional software engineering.
 

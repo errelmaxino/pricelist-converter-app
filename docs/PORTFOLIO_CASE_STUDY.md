@@ -34,7 +34,7 @@ See `parser.py`, `streamlit_app.py`, `storage.py`, and `tests/` for code and che
 | `MAZ BONGO 2000` | Number is part of the model name | Protect `BONGO 2000`; do not manufacture a 2000 model-year claim |
 | `COROLLA 2007` | Brand isn't explicit in an isolated row | Leave it unresolved/reviewable rather than assert a specific brand |
 
-The [synthetic regression checks](../tests/test_catalog_quality.py) pin down these decisions. They test rules in isolation; they are not a complete end-to-end PDF evaluation.
+The [synthetic regression checks](../tests/test_catalog_quality.py) and [generated PDF end-to-end tests](../tests/test_end_to_end_synthetic.py) pin down these decisions. The generated PDF has eight invented catalog lines and nine expected structured records; it is explicitly **not** a real supplier catalog or verified fitment dataset.
 
 ## 5. Decisions and tradeoffs
 
@@ -43,12 +43,16 @@ The [synthetic regression checks](../tests/test_catalog_quality.py) pin down the
 - **Keep a human in control.** Low-confidence and conflicting information should remain reviewable.
 - **Prefer explicit rules and visible evidence over an unverified AI claim.** The current parser is rule-based, even when its interface describes a proposal.
 - **Protect exported data.** Keep untrusted supplier strings as literal text rather than executable spreadsheet formulas.
+- **Make provenance inspectable.** Export stable row identifiers that match the evidence and conflict log even when part codes repeat.
+- **Treat AI as a reviewer, not an authority.** The optional AI tab generates a one-row prompt, accepts source-matching JSON proposals and requires manual approval; no data is automatically sent to a model and nothing is silently applied.
 
 ## 6. Evidence and limits
 
 **Verified check:** GitHub Actions [run 43185239223](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43185239223) completed successfully at branch commit `7deadb0`: **9/9 tests passed on Python 3.11 and 9/9 on Python 3.12**, with Python syntax checks. This includes five preexisting security tests and four new synthetic data-quality tests. The branch remains a draft PR, **not merged or deployed**. These tests do not establish real-world parts-fitment accuracy.
 
-**Not proven:** A measured reduction in errors or time, successful use across all supplier catalogs, manufacturer/OEM fitment verification, public-hosted production performance, and direct synchronization with AMX.
+**New synthetic-only checkpoint:** The generated PDF's eight invented source lines yielded nine expected applications; all nine matched on (code, brand, model, year), one ambiguous brand remained flagged for review, and each application had a distinct traceable row key. A separate regression test also proved identical file names and byte counts do not cause edited state to carry between different PDFs. [GitHub CI run 43189215988](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43189215988) records the scorecard. Later checks continue on the draft PR.
+
+**Not proven:** A measured reduction in errors or time, successful use across all real supplier catalogs, manufacturer/OEM fitment verification, public-hosted production performance, or direct synchronization with AMX.
 
 The tracked `demo_output.xlsx` has not been cleared for disclosure; use only synthetic data for presentations and interviews until its rights and contents are reviewed.
 
@@ -58,4 +62,4 @@ The core motivation came from real motorcycle/automotive retail operations: tran
 
 ## 8. Natural next step
 
-Build one short, reproducible, **synthetic** PDF-to-review-to-export demonstration, with tests for source traceability and conflicts. Do not expand into a full parts marketplace, AI model, or supplier database integration until this smaller quality exercise is verified.
+The synthetic PDF, end-to-end tests and traceability checks are now implemented on draft PR #2. The [safe demo walkthrough](DEMO_WALKTHROUGH.md) describes an employer-friendly 90-second story. Next clear the already-public demo workbook's data/rights, independently review the changes, and manually verify Streamlit screens and exports before sharing externally. Only then consider real labeled catalogs or a paid AI endpoint.

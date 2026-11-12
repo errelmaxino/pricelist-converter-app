@@ -22,6 +22,7 @@ The application therefore keeps **two distinct levels**: the original extracted 
 - Manual correction and Excel output containing five separately named worksheets.
 - Local supplier-specific parsing preferences and import/export of profiles.
 - Five security-boundary tests for path traversal and spreadsheet formula injection, merged in PR #1.
+- Four synthetic data-quality tests added in draft PR #2. These initially exposed a quoted-year defect: `'07` produced model `COROLLA '` instead of `COROLLA`. A narrowly scoped parser change now consumes the full year token without leaving stray punctuation.
 
 See `parser.py`, `streamlit_app.py`, `storage.py`, and `tests/` for code and checks. These are feature descriptions observed in the code, not measured field-accuracy or customer outcomes.
 
@@ -45,7 +46,7 @@ The [synthetic regression checks](../tests/test_catalog_quality.py) pin down the
 
 ## 6. Evidence and limits
 
-**In-code evidence:** The repository contains the parsing functions and review/Excel components described above. The October 2026 merged security PR contains testing and reviewer notes. **New branch tests still need CI verification.**
+**Verified check:** GitHub Actions [run 43185239223](https://github.com/errelmaxino/pricelist-converter-app/actions/runs/43185239223) completed successfully at branch commit `7deadb0`: **9/9 tests passed on Python 3.11 and 9/9 on Python 3.12**, with Python syntax checks. This includes five preexisting security tests and four new synthetic data-quality tests. The branch remains a draft PR, **not merged or deployed**. These tests do not establish real-world parts-fitment accuracy.
 
 **Not proven:** A measured reduction in errors or time, successful use across all supplier catalogs, manufacturer/OEM fitment verification, public-hosted production performance, and direct synchronization with AMX.
 

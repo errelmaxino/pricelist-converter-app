@@ -1,0 +1,16 @@
+# Local data / credentials (never commit supplier records)
+app_data/
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+
+# Python/editor artifacts
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.mypy_cache/
+.vscode/
+.idea/
+.DS_Store

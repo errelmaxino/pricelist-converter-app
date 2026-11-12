@@ -7,6 +7,8 @@ from typing import Iterable
 import pandas as pd
 import streamlit as st
 
+from ai_review import build_review_prompt, validate_review_proposal
+
 from parser import (
     ParsedCatalog,
     applications_dataframe,
@@ -447,6 +449,7 @@ if uploaded is not None:
             "5) Raw catalog rows",
             "6) Conflict log",
             "7) Export",
+            "8) AI review (opt-in)",
         ]
     )
 
@@ -794,3 +797,99 @@ if uploaded is not None:
             "- **Conflict Log**: ambiguity, validation, or inference warnings  \n"
             "- **Evidence Log**: field-by-field reasons and confidence"
         )
+
+    with tabs[7]:
+        st.subheader("AI review suggestions — optional and human-controlled")
+        st.info(
+            "No AI provider is called by this app. You can copy a single-row prompt "
+            "to a provider you choose and paste the result back. Suggestions are NOT "
+            "verified vehicle fitment, and nothing is sent automatically."
+        )
+        st.warning(
+            "Only share synthetic data or supplier information you are explicitly authorized "
+            "to disclose. The selected catalog line is included in the prompt."
+        )
+        current_rows = _working_df()
+        if not current_rows.empty:
+            labels = {
+                f"{row['Row Key']} · {row['Brand'] or '(unknown)'} · {row['Model'] or '(blank)'}": idx
+                for idx, row in current_rows.iterrows()
+            }
+            selected_label = st.selectbox("Select exactly one catalog row", list(labels), key="ai_review_selected_row")
+            selected_idx = labels[selected_label]
+            selected_row = current_rows.loc[selected_idx].to_dict()
+            allowed = st.checkbox(
+                "I will use only synthetic or authorized source data in an external AI provider.",
+                value=False,
+                key="ai_review_disclosure_confirm",
+            )
+            if allowed:
+                prompt = build_review_prompt(selected_row)
+                st.code(prompt, language="text")
+                st.download_button(
+                    "Download single-row prompt",
+                    data=prompt,
+                    file_name="parts_data_review_prompt.txt",
+                    mime="text/plain",
+                    key="ai_review_download_prompt",
+                )
+                proposed_json = st.text_area(
+                    "Paste the provider's JSON suggestion here",
+                    height=170,
+                    placeholder='{"row_key": "...", "source_line": "...", "evidence_quote": "...", "proposed_fields": {}, "reason": "..."}',
+                    key="ai_review_json_input",
+                )
+                if st.button("Validate suggestion against this source row", key="ai_review_validate"):
+                    try:
+                        verified_shape = validate_review_proposal(proposed_json, selected_row)
+                        st.session_state["ai_review_verified_proposal"] = {
+                            "file_signature": sig,
+                            "row_key": selected_row["Row Key"],
+                            "proposal": verified_shape,
+                        }
+                        st.success("Source/format checks passed. These checks do NOT prove the proposed values are correct.")
+                    except ValueError as exc:
+                        st.session_state.pop("ai_review_verified_proposal", None)
+                        st.error(str(exc))
+                candidate = st.session_state.get("ai_review_verified_proposal")
+                if (
+                    candidate
+                    and candidate["file_signature"] == sig
+                    and candidate["row_key"] == selected_row["Row Key"]
+                    and candidate["proposal"]["source_line"] == selected_row["Source Line"]
+                ):
+                    suggestion = candidate["proposal"]
+                    if suggestion["proposed_fields"]:
+                        st.write("**Proposed edits (not yet applied):**", suggestion["proposed_fields"])
+                        st.write("**Exact source excerpt:**", suggestion["evidence_quote"])
+                        st.write("**Model's explanation:**", suggestion["reason"])
+                        confirmed = st.checkbox(
+                            "I checked the source myself and approve applying these fields. "
+                            "The row will still require review before being considered ready.",
+                            value=False,
+                            key=f"ai_review_manual_approve_{selected_row['Row Key']}",
+                        )
+                        if st.button(
+                            "Apply my approved edits (keep row in review)",
+                            disabled=not confirmed,
+                            key="ai_review_apply",
+                        ):
+                            latest = _working_df().copy()
+                            if (
+                                latest.loc[selected_idx, "Row Key"] == suggestion["row_key"]
+                                and latest.loc[selected_idx, "Source Line"] == suggestion["source_line"]
+                            ):
+                                for field, proposed_value in suggestion["proposed_fields"].items():
+                                    latest.at[selected_idx, field] = proposed_value
+                                latest.at[selected_idx, "Review Status"] = "Needs Review"
+                                old_note = str(latest.at[selected_idx, "Pattern Notes"] or "")
+                                latest.at[selected_idx, "Pattern Notes"] = (
+                                    old_note + "; source-checked AI-assisted suggestion manually applied"
+                                ).strip("; ")
+                                _set_working_df(latest)
+                                st.session_state.pop("ai_review_verified_proposal", None)
+                                st.success("Edits saved locally for this session. Row remains Needs Review.")
+                            else:
+                                st.error("The source row changed. Validate again before applying.")
+                    else:
+                        st.info("The model proposed no changes. No data was modified.")

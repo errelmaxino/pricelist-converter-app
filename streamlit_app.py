@@ -22,7 +22,7 @@ from parser import (
 )
 from storage import export_profiles_json, get_profile, import_profiles_json, list_profiles, save_profile
 
-st.set_page_config(page_title="Smart Automotive Pricelist PDF to Excel", page_icon="🧩", layout="wide")
+st.set_page_config(page_title="Automotive Parts Data Quality Lab", page_icon="🧩", layout="wide")
 
 
 EDITABLE_FIELDS = [
@@ -333,9 +333,9 @@ def _status_metrics(df: pd.DataFrame) -> dict[str, int]:
     }
 
 
-st.title("Smart Automotive Pricelist PDF to Excel")
+st.title("Automotive Parts Data Quality Lab")
 st.caption(
-    "Accuracy-first conversion for automotive PDF catalogs: layout-aware extraction, segment splitting, protected phrases, field validators, supplier memory, conflict logs, review queues, and faster approval controls."
+    "Source-based PDF catalog normalization, field evidence and human review. Rule confidence is NOT OEM fitment validation."
 )
 
 with st.sidebar:
@@ -425,6 +425,7 @@ if uploaded is not None:
 
     metrics = _status_metrics(working_df)
     st.subheader("Conversion summary")
+    st.warning("A high rule confidence score does NOT confirm vehicle fitment or real-world parsing accuracy. Check uncertainty and source evidence.")
     metric_cols = st.columns(6)
     metric_cols[0].metric("Catalog rows", parsed.metrics.get("catalog_rows", len(raw_df)))
     metric_cols[1].metric("Application rows", parsed.metrics.get("application_rows", len(working_df)))
@@ -642,7 +643,7 @@ if uploaded is not None:
         current_df = _working_df()
         queue_idxs = _queue_indices(current_df)
         if not queue_idxs:
-            st.success("All rows are currently auto-accepted. You can still review the Split Preview or export the workbook.")
+            st.success("All rows are marked rule-accepted. They are not independently verified fitment records.")
         else:
             detail_label_map = _label_map(current_df.loc[queue_idxs])
             labels = list(detail_label_map.keys())

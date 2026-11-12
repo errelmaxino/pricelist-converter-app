@@ -201,7 +201,7 @@ GENERIC_ENGINE_REGEX = re.compile(r"^(?:[1-9][A-Z]{1,3}\d{1,3}[A-Z]?|\d{1,2}[A-Z
 YEAR_RANGE_4D = re.compile(r"(?P<all>(?P<s>19\d{2}|20\d{2})\s*(?:-|TO)\s*(?P<e>19\d{2}|20\d{2}|UP))", re.IGNORECASE)
 YEAR_RANGE_2D = re.compile(r"(?P<all>[\"']?(?P<s>\d{2})[\"']?\s*-\s*[\"']?(?P<e>\d{2}|UP)[\"']?)", re.IGNORECASE)
 YEAR_SINGLE_4D = re.compile(r"(?P<all>19\d{2}|20\d{2})", re.IGNORECASE)
-YEAR_SINGLE_QUOTED = re.compile(r"(?P<all>[\"']?(?P<y>\d{2})[\"'])", re.IGNORECASE)
+YEAR_SINGLE_QUOTED = re.compile(r"(?P<all>(?<![A-Z0-9])(?:[\"']\d{2}[\"']?|\d{2}[\"'])(?![A-Z0-9]))", re.IGNORECASE)
 YEAR_SINGLE_TRAILING = re.compile(r"(?P<all>(?<![A-Z0-9])(?P<y>\d{2})(?![A-Z0-9]))$", re.IGNORECASE)
 
 

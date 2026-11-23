@@ -81,6 +81,30 @@ def main() -> None:
                     "button", name="Download Excel workbook"
                 ).click()
             excel_download.value.save_as(xlsx_path)
+
+            # Exercise an actual form save and a second export, not only viewing rows.
+            # The only uncertain synthetic row is VK-104. Keep it in human review.
+            page.get_by_role("tab", name="4) Row detail").click()
+            brand_input = page.get_by_role("textbox", name="Brand", exact=True)
+            brand_input.wait_for()
+            brand_input.fill("INVENTED EDIT - NOT VERIFIED")
+            page.get_by_role("button", name="Save row edits").click()
+            page.get_by_text("Saved manual edits for the selected row.").wait_for()
+            page.get_by_role("tab", name="7) Export").click()
+            edited_xlsx_path = Path(tmp) / "invented-edited-review.xlsx"
+            with page.expect_download() as edited_download:
+                page.get_by_role("button", name="Download Excel workbook").click()
+            edited_download.value.save_as(edited_xlsx_path)
+
+            # No AI provider can receive data until the user explicitly opts in.
+            page.get_by_role("tab", name="8) AI review (opt-in)").click()
+            consent = page.get_by_role("checkbox", name=re.compile(
+                "I will use only synthetic or authorized source data"
+            ))
+            assert not consent.is_checked(), "AI disclosure consent enabled by default"
+            assert page.get_by_role(
+                "button", name="Validate suggestion against this source row"
+            ).count() == 0, "AI proposal controls visible without consent"
             browser.close()
 
         wb = load_workbook(xlsx_path, data_only=False, read_only=True)
@@ -128,12 +152,26 @@ def main() -> None:
         )
         wb.close()
 
+        changed = load_workbook(edited_xlsx_path, read_only=True, data_only=False)
+        edited = changed["Applications"].iter_rows(values_only=True)
+        edited_headers = next(edited)
+        edits = {str(row[edited_headers.index("Code")]): row for row in edited}
+        assert edits["VK-104"][edited_headers.index("Brand")] == (
+            "INVENTED EDIT - NOT VERIFIED"
+        ), "Manual edit did not survive XLSX re-export"
+        assert edits["VK-104"][edited_headers.index("Review Status")] == (
+            "Needs Review"
+        ), "Manual edit incorrectly marked ambiguous record as approved"
+        changed.close()
+
     print("PASS: Browser opened converter and downloaded invented PDF")
     print("PASS: Browser uploaded PDF and showed 8 catalog rows / 9 applications")
     print("PASS: Exported Excel has 5 expected tabs and 9 exact invented records")
     print("PASS: Ambiguous brand remains in human review")
     print("PASS: Every exported application is linked to evidence")
     print("PASS: Screenshots captured from invented data only")
+    print("PASS: Manual edit saved and re-exported without approving fitment")
+    print("PASS: AI proposal controls require explicit consent")
 
 
 if __name__ == "__main__":

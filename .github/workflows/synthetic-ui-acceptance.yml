@@ -52,7 +52,7 @@ jobs:
               raise SystemExit("Streamlit did not start")
           PY
       - name: Test invented-data browser upload and Excel export
-        run: python scripts/synthetic_ui_acceptance.py
+        run: python -m scripts.synthetic_ui_acceptance
       - name: Preserve invented-data screenshots only
         if: always()
         uses: actions/upload-artifact@v4

@@ -54,10 +54,6 @@ def main() -> None:
             assert inputs.count() >= 2, "PDF uploader not found"
             inputs.last.set_input_files(str(pdf_path))
             page.get_by_text("Conversion summary").wait_for()
-            page.screenshot(
-                path=str(screenshots / "synthetic-summary.png"), full_page=True
-            )
-
             metrics = page.locator('[data-testid="stMetric"]')
             catalog = metrics.filter(has_text="Catalog rows").inner_text()
             applications = metrics.filter(has_text="Application rows").inner_text()
@@ -65,11 +61,17 @@ def main() -> None:
             assert re.search(r"\b9\b", applications), (
                 f"Unexpected application rows: {applications}"
             )
+            page.get_by_role("tab", name="7) Export").wait_for()
+            page.screenshot(
+                path=str(screenshots / "synthetic-summary.png"), full_page=True
+            )
 
             page.get_by_role("tab", name="7) Export").click()
             page.get_by_role(
                 "button", name="Download Excel workbook"
             ).wait_for()
+            page.get_by_text("Workbook sheets").wait_for()
+            page.get_by_text("Evidence Log", exact=True).last.wait_for()
             page.screenshot(
                 path=str(screenshots / "synthetic-export.png"), full_page=True
             )

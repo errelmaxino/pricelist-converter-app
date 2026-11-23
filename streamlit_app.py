@@ -115,6 +115,7 @@ def _ensure_working_state(base_df: pd.DataFrame, signature: str) -> None:
         st.session_state["dashboard_search_brand"] = ""
         st.session_state["dashboard_selected_labels"] = []
         st.session_state["detail_pointer"] = 0
+        st.session_state["editor_revision"] = 0
 
 
 
@@ -125,6 +126,8 @@ def _working_df() -> pd.DataFrame:
 
 def _set_working_df(df: pd.DataFrame) -> None:
     st.session_state["working_df"] = df
+    # A row-detail, dashboard or grid update must invalidate older grid snapshots.
+    st.session_state["editor_revision"] = st.session_state.get("editor_revision", 0) + 1
 
 
 
@@ -216,15 +219,26 @@ def _apply_search_filters(df: pd.DataFrame, code_search: str, brand_search: str)
 
 
 
-def _merge_editor_subset(edited_subset: pd.DataFrame) -> None:
-    if edited_subset is None:
+def _merge_editor_subset(edited_subset: pd.DataFrame, edited_rows: dict) -> None:
+    # Streamlit returns an entire preview even when only one cell was edited.
+    # Copying all of it can undo a newer change from the row-detail form.
+    if edited_subset is None or not edited_rows:
         return
     working_df = _working_df().copy()
-    for idx in edited_subset.index:
-        for col in edited_subset.columns:
-            if col in working_df.columns:
+    changed = False
+    for display_position, cells in edited_rows.items():
+        position = int(display_position)
+        if position < 0 or position >= len(edited_subset):
+            continue
+        idx = edited_subset.index[position]
+        if idx not in working_df.index:
+            continue
+        for col in cells:
+            if col in EDITABLE_FIELDS and col in edited_subset.columns:
                 working_df.at[idx, col] = edited_subset.at[idx, col]
-    _set_working_df(working_df)
+                changed = True
+    if changed:
+        _set_working_df(working_df)
 
 
 
@@ -534,6 +548,10 @@ if uploaded is not None:
             preview_df = preview_df[_important_blank_mask(preview_df)]
 
         st.caption("Edit final export values here. Changes are saved in the current session and included in the downloaded Excel workbook.")
+        editor_key = (
+            f"applications_editor_v8_{hashlib.sha256(sig.encode()).hexdigest()[:12]}_"
+            f"{st.session_state.get('editor_revision', 0)}"
+        )
         edited_subset = st.data_editor(
             preview_df,
             use_container_width=True,
@@ -546,9 +564,9 @@ if uploaded is not None:
                 "Use Price (PHP)": st.column_config.NumberColumn("Use Price (PHP)", format="₱ %.2f"),
             },
             disabled=["Source Line", "Supplier Brand", "Category", "Code", "Original Price (PHP)", "Page", "Confidence", "Review Status", "Pattern Notes", "Row Key"],
-            key="applications_editor_v7",
+            key=editor_key,
         )
-        _merge_editor_subset(edited_subset)
+        _merge_editor_subset(edited_subset, st.session_state.get(editor_key, {}).get("edited_rows", {}))
         st.success(f"Currently tracking {len(_working_df())} application rows in the review session.")
 
     with tabs[2]:

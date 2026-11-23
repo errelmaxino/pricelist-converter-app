@@ -61,3 +61,27 @@ jobs:
           path: artifacts/synthetic-ui/
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Package public source only for private local catalog testing
+        if: success()
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZIP_DEFLATED, ZipFile
+          paths = ["README.md", "parser.py", "streamlit_app.py", "storage.py", "ai_review.py",
+                   "requirements.txt", "runtime.txt"]
+          paths += sorted(str(p) for d in ("scripts", "tests")
+                          for p in Path(d).rglob("*.py") if p.is_file())
+          Path("artifacts").mkdir(exist_ok=True)
+          with ZipFile("artifacts/converter-source-only.zip", "w", ZIP_DEFLATED) as z:
+              for path in paths:
+                  z.write(path, arcname=path)
+          print("Source-only bundle paths:", ", ".join(paths))
+          PY
+      - name: Retain source-only package without supplier data
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-only-private-test-bundle
+          path: artifacts/converter-source-only.zip
+          retention-days: 1

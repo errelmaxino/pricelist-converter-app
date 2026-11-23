@@ -1,6 +1,12 @@
 name: Synthetic converter browser acceptance
 
 on:
+  push:
+    branches:
+      - portfolio/parts-data-quality-case-study-20261112
+    paths:
+      - "scripts/synthetic_ui_acceptance.py"
+      - ".github/workflows/synthetic-ui-acceptance.yml"
   pull_request:
     paths:
       - "scripts/synthetic_ui_acceptance.py"
